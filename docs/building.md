@@ -37,7 +37,7 @@ make -C gateware bitstream GOWIN_PACK=~/apycula/bin/gowin_pack
 | Target | What it does |
 |---|---|
 | `make sim` | unit testbenches plus the full-chip self-test (about 10 s) |
-| `make golden` | pixel-exact comparison against TinyGPU's software renderer (about 1 min). Needs TinyGPU next to this library, or `TINYGPU_DIR=...` |
+| `make golden` | pixel-exact comparison of three test scenes against their software references (GOLDEN_TIME). Needs TinyGPU next to this library, or `TINYGPU_DIR=...`; the TinyMaterialDesign and H.264 scenes run only if those libraries are found (`TINYMD_DIR`, `TINYH264_DIR`) |
 | `make bitstream` | yosys → `fix_bram_oce.py` → nextpnr → gowin_pack (about 8 min) |
 | `make load` / `make flash` | program the board |
 

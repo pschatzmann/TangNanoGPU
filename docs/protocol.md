@@ -59,15 +59,17 @@ polls `STATUS` for free space before sending.
 | colour | RGB565, **high byte first**. This is the byte order of TinyGPU's `RGB565` values in memory (`RGB565::getValue()` stores the conventional value byte-swapped), so `Surface<RGB565>::data()` can be streamed out unchanged. |
 | pixels | colours, row-major, no padding |
 
-Coordinates are signed. Everything is clipped against the current clip
-rectangle, which the FPGA always keeps inside the 320×240 framebuffer.
+Coordinates are signed. Drawing is clipped against the current clip
+rectangle, which the FPGA always keeps inside the 320×240 framebuffer. The
+exceptions are PIXELS and WRITE_RECT with flag bit 1: like TinyGPU's
+`setPixel()`, they are bounded only by the framebuffer.
 
 ## Immediate opcodes
 
 | Op | Name | Payload | Response (starting with the byte after the opcode) |
 |---|---|---|---|
 | `01` | PING | – | `"TANG"`, then the gateware version (`01`) |
-| `02` | RESET | – | – flushes both FIFOs, resets target, clip and sticky flags; the picture stays |
+| `02` | RESET | – | – flushes both FIFOs; resets the drawing target and the shown buffer to 0, the clip rect to the full screen, and all sticky flags. Framebuffer contents are kept |
 | `03` | STATUS | – | `cmd_free:u16`, `flags:u8`, `frame_count:u16`, `resp_used:u16` |
 | `51` | READ_DATA | – | streams bytes from the response FIFO (`00` once it is empty) |
 
@@ -98,8 +100,27 @@ STATUS `flags`:
 | `30` | WRITE_RECT | `x:i16 y:i16 w:u16 h:u16 flags:u8 key:color`, then w·h pixels | `drawSprite` (flags bit 0 = skip `key` pixels; bit 1 = ignore the clip rect, used for runs of `setPixel()` calls), `DisplayDriver::writeData` |
 | `31` | UPLOAD | `row:u16 w:u16 h:u16`, then w·h pixels | stores an image at SDRAM row `row` (one row per image line, w ≤ 512) |
 | `32` | COPY_RECT | `srow:u16 sx:u16 sy:u16 w:u16 h:u16 dx:i16 dy:i16 flags:u8 key:color` | copies from the surface at SDRAM row `srow` (an uploaded image, or a framebuffer) to (dx, dy) in the target: `blit`, `scroll` |
+| `34` | YUV_MBS | `n:u16`, then n × (`x:i16 y:i16`, Cb[64], Cr[64], Y[256]) | video: 16×16 macroblocks of a YUV 4:2:0 picture at pixel position (x, y), converted to RGB565 by the FPGA (see below); clipped like WRITE_RECT. `YUVFrameWriter` sends only changed macroblocks |
 | `40` | MASK | `x:i16 y:i16 w:u16 h:u16 flags:u8 fg:color bg:color`, then rows of bits | `drawText`. flags bit 0 = 2 bits per pixel. 1 bpp: 1 = fg. 2 bpp: `01` = fg, `10` = bg, otherwise unchanged. MSB first, each row padded to a whole byte. |
 | `50` | READ_RECT | `x:u16 y:u16 w:u16 h:u16` | `getPixel`, `copySprite`. Pushes w·h pixels into the 2 KB response FIFO; collect them with READ_DATA. |
+
+### YUV → RGB565 conversion (YUV_MBS)
+
+The conversion is ITU-R BT.601 limited range. It uses the integer formula
+from TinyH264's `yuvToRgb8()`, which is common in embedded decoders, so the
+result is bit-identical to TinyH264's own `toRGB565()`. Note that
+`toRGB565()` returns its values byte-swapped by default (for SPI panels);
+with `setByteSwap(false)` they are the native values below:
+
+```
+c = Y − 16,  d = Cb − 128,  e = Cr − 128
+R = clip((298c + 409e + 128) >> 8)
+G = clip((298c − 100d − 208e + 128) >> 8)
+B = clip((298c + 516d + 128) >> 8)
+RGB565 = {R[7:3], G[7:2], B[7:3]}
+```
+
+Chroma sample (i/2, j/2) applies to luma pixel (i, j) of the macroblock.
 
 ### SDRAM layout
 
@@ -122,7 +143,9 @@ algorithms as TinyGPU's `SurfaceBase.h`:
 - the inclusive clip rules of `setPixelClipped`/`drawHorizontalLineClipped`.
 
 The FPGA therefore draws pixel-identical results. `tools/golden` checks
-this for a test scene that covers every command.
+this with three test scenes that together cover every command: a TinyGPU
+scene, a TinyMaterialDesign screen with readbacks, and decoded H.264 video
+(see [architecture.md](architecture.md#verification-status)).
 
 One difference: TinyGPU's software surface takes `size_t` coordinates, so
 negative values wrap around. For example, a `fillRect` that starts left of

@@ -73,7 +73,7 @@ module gpu_exec #(
                    OP_SET_CLIP = 8'h13, OP_FILL_RECT = 8'h20, OP_LINE = 8'h21,
                    OP_PIXELS = 8'h22, OP_CIRCLE = 8'h23, OP_WRITE_RECT = 8'h30,
                    OP_UPLOAD = 8'h31, OP_COPY_RECT = 8'h32, OP_MASK = 8'h40,
-                   OP_READ_RECT = 8'h50;
+                   OP_READ_RECT = 8'h50, OP_YUV_MBS = 8'h34;
 
   function [4:0] hdr_len(input [7:0] op);
     case (op)
@@ -90,6 +90,7 @@ module gpu_exec #(
       OP_COPY_RECT:  hdr_len = 5'd17;
       OP_MASK:       hdr_len = 5'd13;
       OP_READ_RECT:  hdr_len = 5'd8;
+      OP_YUV_MBS:    hdr_len = 5'd2;
       default:       hdr_len = 5'd31;   // unknown
     endcase
   endfunction
@@ -109,7 +110,9 @@ module gpu_exec #(
     S_CP_ROW = 6'd21, S_CP_STAGE = 6'd22, S_CP_FLUSH = 6'd23,
     S_MK_ROW = 6'd24, S_MK_PIX = 6'd25, S_MK_FLUSH = 6'd26,
     S_RR_ROW = 6'd27, S_RR_ADDR = 6'd28, S_RR_WAIT = 6'd29, S_RR_HI = 6'd30, S_RR_LO = 6'd31,
-    S_VSYNC = 6'd32, S_PLOT = 6'd33, S_HSPAN = 6'd34;
+    S_VSYNC = 6'd32, S_PLOT = 6'd33, S_HSPAN = 6'd34,
+    S_YM_NEXT = 6'd35, S_YM_START = 6'd36, S_YM_C = 6'd37, S_YM_ROW = 6'd38,
+    S_YM_PIX = 6'd39, S_YM_DRAIN = 6'd40;
 
   reg [5:0] state, ret, ret2;
 
@@ -341,12 +344,88 @@ module gpu_exec #(
   reg  [17:0] cp_x1, cp_x2, cp_q1, cp_q2;
 
   // ------------------------------------------------------------------
+  // YUV_MBS: chroma buffer + BT.601 converter
+  //
+  // One macroblock = 16x16 luma + 8x8 Cb + 8x8 Cr (I420). Payload order
+  // per macroblock: x:i16 y:i16, Cb[64], Cr[64], Y[256] (row-major), so
+  // the chroma is in place before the luma rows stream through.
+  //
+  // Conversion: ITU-R BT.601 limited range, the integer formula TinyH264
+  // (decoder/h264_rgb.h yuvToRgb8) and most embedded decoders use:
+  //   c = Y-16, d = Cb-128, e = Cr-128
+  //   R = clip((298c + 409e + 128) >> 8)
+  //   G = clip((298c - 100d - 208e + 128) >> 8)
+  //   B = clip((298c + 516d + 128) >> 8)
+  // The constant products are written as shift-and-add (no multipliers),
+  // in two register stages; output packs to RGB565 like TinyH264's
+  // toRGB565(): {R[7:3], G[7:2], B[7:3]}.
+  // ------------------------------------------------------------------
+  reg  [7:0] cbuf [0:127];               // [0..63] Cb, [64..127] Cr, 8x8 each
+  reg  [6:0] cidx;
+  reg  [7:0] ym_y;                       // luma byte entering the pipeline
+  reg        ym_v0, ym_vis0;
+  reg  [8:0] ym_x0;
+  reg  [2:0] ym_crow, ym_ccol;           // chroma row/column of that pixel
+  wire [7:0] ym_cb = cbuf[{1'b0, ym_crow, ym_ccol}];
+  wire [7:0] ym_cr = cbuf[{1'b1, ym_crow, ym_ccol}];
+
+  wire signed [9:0] yuv_c = $signed({2'b00, ym_y})  - 10'sd16;
+  wire signed [9:0] yuv_d = $signed({2'b00, ym_cb}) - 10'sd128;
+  wire signed [9:0] yuv_e = $signed({2'b00, ym_cr}) - 10'sd128;
+  function signed [19:0] sx20(input signed [9:0] v);
+    sx20 = {{10{v[9]}}, v};
+  endfunction
+  // 298 = 256+32+8+2, 409 = 256+128+16+8+1, 100 = 64+32+4,
+  // 208 = 128+64+16, 516 = 512+4
+  wire signed [19:0] c298 = (sx20(yuv_c) <<< 8) + (sx20(yuv_c) <<< 5) + (sx20(yuv_c) <<< 3) + (sx20(yuv_c) <<< 1);
+  wire signed [19:0] e409 = (sx20(yuv_e) <<< 8) + (sx20(yuv_e) <<< 7) + (sx20(yuv_e) <<< 4) + (sx20(yuv_e) <<< 3) + sx20(yuv_e);
+  wire signed [19:0] d100 = (sx20(yuv_d) <<< 6) + (sx20(yuv_d) <<< 5) + (sx20(yuv_d) <<< 2);
+  wire signed [19:0] e208 = (sx20(yuv_e) <<< 7) + (sx20(yuv_e) <<< 6) + (sx20(yuv_e) <<< 4);
+  wire signed [19:0] d516 = (sx20(yuv_d) <<< 9) + (sx20(yuv_d) <<< 2);
+
+  reg signed [19:0] p_c, p_e409, p_d100, p_e208, p_d516;
+  reg               ym_v1, ym_vis1;
+  reg  [8:0]        ym_x1;
+
+  wire signed [19:0] r_s = (p_c + p_e409 + 20'sd128) >>> 8;
+  wire signed [19:0] g_s = (p_c - p_d100 - p_e208 + 20'sd128) >>> 8;
+  wire signed [19:0] b_s = (p_c + p_d516 + 20'sd128) >>> 8;
+  function [7:0] clip8(input signed [19:0] v);
+    clip8 = (v < 0) ? 8'd0 : (v > 255) ? 8'd255 : v[7:0];
+  endfunction
+  wire [7:0] r8 = clip8(r_s), g8 = clip8(g_s), b8 = clip8(b_s);
+
+  reg        ym_v2;
+  reg [8:0]  ym_x2;
+  reg [15:0] ym_rgb;
+
+  always @(posedge clk) begin
+    // stage 1: constant products
+    p_c    <= c298;
+    p_e409 <= e409;
+    p_d100 <= d100;
+    p_e208 <= e208;
+    p_d516 <= d516;
+    ym_v1   <= ym_v0;
+    ym_vis1 <= ym_vis0;
+    ym_x1   <= ym_x0;
+    // stage 2: sums, clipping, RGB565 packing
+    ym_v2  <= ym_v1 && ym_vis1;
+    ym_x2  <= ym_x1;
+    ym_rgb <= {r8[7:3], g8[7:2], b8[7:3]};
+  end
+
+  reg [15:0] ym_n;    // macroblocks left
+  reg [1:0]  ym_wait;
+
+  // ------------------------------------------------------------------
   // Main FSM
   // ------------------------------------------------------------------
   always @(posedge clk) begin
     pop_r  <= 1'b0;
     r_push <= 1'b0;
     st_we  <= 1'b0;
+    ym_v0  <= 1'b0;
 
     if (rst) begin
       state      <= S_IDLE;
@@ -361,6 +440,13 @@ module gpu_exec #(
       ridx <= 8'd0;
       noclip <= 1'b0;
     end else begin
+      // YUV converter output -> span buffer (see YUV_MBS above)
+      if (ym_v2) begin
+        st_we    <= 1'b1;
+        st_x     <= ym_x2;
+        st_pix   <= ym_rgb;
+        st_valid <= 1'b1;
+      end
       case (state)
 
         // ---------------- parsing ----------------
@@ -523,6 +609,11 @@ module gpu_exec #(
               xe      <= smin(h_s16_0 + $signed({2'b0, h_u16_4}) - 18'sd1, clx1);
               j       <= 16'd0;
               state   <= (h_u16_4 == 16'd0 || h_u16_6 == 16'd0) ? S_IDLE : S_MK_ROW;
+            end
+
+            OP_YUV_MBS: begin
+              ym_n  <= h_u16_0;
+              state <= S_YM_NEXT;
             end
 
             OP_READ_RECT: begin
@@ -817,6 +908,72 @@ module gpu_exec #(
             cx     <= cx + 18'sd1;
             i      <= i + 16'd1;
             state  <= S_RR_ADDR;
+          end
+        end
+
+        // ---------------- YUV_MBS (video macroblocks) ----------------
+        S_YM_NEXT: begin
+          if (ym_n == 16'd0) state <= S_IDLE;
+          else begin
+            ym_n  <= ym_n - 16'd1;
+            get_i <= 5'd2;
+            get_n <= 5'd4;
+            ret   <= S_YM_START;
+            state <= S_GET;
+          end
+        end
+        S_YM_START: begin
+          rx0   <= {{2{h[3][7]}}, h[3], h[2]};
+          ry0   <= {{2{h[5][7]}}, h[5], h[4]};
+          xs    <= smax({{2{h[3][7]}}, h[3], h[2]}, clx0);
+          xe    <= smin({{2{h[3][7]}}, h[3], h[2]} + 18'sd15, clx1);
+          cidx  <= 7'd0;
+          j     <= 16'd0;
+          state <= S_YM_C;
+        end
+        S_YM_C: begin
+          if (c_valid && !pop_r) begin
+            cbuf[cidx] <= c_data;
+            pop_r      <= 1'b1;
+            cidx       <= cidx + 7'd1;
+            if (cidx == 7'd127) state <= S_YM_ROW;
+          end
+        end
+        S_YM_ROW: begin
+          if (j == 16'd16) state <= S_YM_NEXT;
+          else begin
+            cy <= ry0 + $signed({2'b0, j});
+            row_vis <= (ry0 + $signed({2'b0, j})) >= cly0 && (ry0 + $signed({2'b0, j})) <= cly1 && xs <= xe;
+            i     <= 16'd0;
+            cx    <= rx0;
+            state <= S_YM_PIX;
+          end
+        end
+        S_YM_PIX: begin
+          if (i == 16'd16) begin
+            ym_wait <= 2'd3;
+            state   <= S_YM_DRAIN;
+          end else if (c_valid && !pop_r) begin
+            pop_r   <= 1'b1;
+            ym_y    <= c_data;
+            ym_v0   <= 1'b1;
+            ym_vis0 <= row_vis && cx >= xs && cx <= xe;
+            ym_x0   <= cx[8:0];
+            ym_crow <= j[3:1];
+            ym_ccol <= i[3:1];
+            cx      <= cx + 18'sd1;
+            i       <= i + 16'd1;
+          end
+        end
+        S_YM_DRAIN: begin
+          // let the last pixels leave the converter pipeline
+          if (ym_wait != 2'd0) ym_wait <= ym_wait - 2'd1;
+          else begin
+            j <= j + 16'd1;
+            if (row_vis)
+              start_sw(tgt_row | {5'd0, cy[7:0]}, xs[8:0], xe[8:0], 1'b0, 16'd0, S_YM_ROW);
+            else
+              state <= S_YM_ROW;
           end
         end
 

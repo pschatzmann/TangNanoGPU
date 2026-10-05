@@ -280,6 +280,46 @@ class TangNanoGPU {
     copyRect(row, 0, 0, w, h, x, y, useKey, key);
   }
 
+  /// Writes 16x16 macroblocks of a YUV 4:2:0 (I420) picture; the FPGA
+  /// converts them to RGB565 (BT.601 limited range, same integer formula
+  /// as TinyH264's toRGB565()). The picture's top-left corner is placed at
+  /// (x0, y0) in the framebuffer; `mbs` lists the macroblocks to send as
+  /// row * mbCols + column. Macroblocks are clipped like writeRect().
+  /// Y/U/V and the strides are the decoder's planes (U = Cb, V = Cr).
+  void writeYuvMacroblocks(int x0, int y0, const uint8_t* Y, int strideY, const uint8_t* U,
+                           const uint8_t* V, int strideUV, const uint16_t* mbs, size_t count,
+                           int mbCols) {
+    // without BUSY, keep each command inside half the FIFO
+    size_t perCmd = io_.hasBusyPin() ? 0xffff : (kCmdFifoBytes / 2 - 4) / kMacroblockBytes;
+    for (size_t first = 0; first < count; first += perCmd) {
+      size_t n = (count - first < perCmd) ? count - first : perCmd;
+      uint8_t hdr[4] = {addr_, op::kYuvMacroblocks, static_cast<uint8_t>(n & 0xff),
+                        static_cast<uint8_t>(n >> 8)};
+      flushPixels();
+      cacheValid_ = false;
+      reserve(4 + n * kMacroblockBytes);
+      io_.beginTransaction(false);
+      io_.write(hdr, 4);
+      uint8_t mb[kMacroblockBytes];
+      for (size_t k = first; k < first + n; ++k) {
+        int col = mbs[k] % mbCols, row = mbs[k] / mbCols;
+        uint16_t x = static_cast<uint16_t>(static_cast<int16_t>(x0 + col * 16));
+        uint16_t y = static_cast<uint16_t>(static_cast<int16_t>(y0 + row * 16));
+        mb[0] = x & 0xff; mb[1] = x >> 8; mb[2] = y & 0xff; mb[3] = y >> 8;
+        const uint8_t* u = U + static_cast<size_t>(row) * 8 * strideUV + col * 8;
+        const uint8_t* v = V + static_cast<size_t>(row) * 8 * strideUV + col * 8;
+        for (int r = 0; r < 8; ++r) {
+          memcpy(mb + 4 + r * 8, u + static_cast<size_t>(r) * strideUV, 8);
+          memcpy(mb + 68 + r * 8, v + static_cast<size_t>(r) * strideUV, 8);
+        }
+        const uint8_t* yy = Y + static_cast<size_t>(row) * 16 * strideY + col * 16;
+        for (int r = 0; r < 16; ++r) memcpy(mb + 132 + r * 16, yy + static_cast<size_t>(r) * strideY, 16);
+        io_.write(mb, kMacroblockBytes);
+      }
+      io_.endTransaction();
+    }
+  }
+
   /// Draws a 1bpp (fg where set) or 2bpp (01 = fg, 10 = bg, else skip)
   /// bitmap, MSB first, each row padded to a whole byte.
   void mask(int x, int y, int w, int h, bool twoBpp, uint16_t fg, uint16_t bg,

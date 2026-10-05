@@ -24,6 +24,7 @@ constexpr uint8_t kCircle = 0x23;
 constexpr uint8_t kWriteRect = 0x30;
 constexpr uint8_t kUpload = 0x31;
 constexpr uint8_t kCopyRect = 0x32;
+constexpr uint8_t kYuvMacroblocks = 0x34;
 constexpr uint8_t kMask = 0x40;
 constexpr uint8_t kReadRect = 0x50;
 }  // namespace op
@@ -38,6 +39,8 @@ constexpr uint16_t kImageRowBase = 512;
 constexpr uint16_t kImageRowEnd = 8192;
 /// Max pixels per image row (one SDRAM row)
 constexpr int kMaxImageWidth = 512;
+/// One YUV_MBS macroblock on the wire: x:i16 y:i16 Cb[64] Cr[64] Y[256]
+constexpr size_t kMacroblockBytes = 4 + 64 + 64 + 256;
 /// Command FIFO / response FIFO sizes (bytes usable)
 constexpr size_t kCmdFifoBytes = 4095;
 constexpr size_t kRespFifoBytes = 2047;

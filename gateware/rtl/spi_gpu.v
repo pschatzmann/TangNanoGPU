@@ -133,7 +133,10 @@ module spi_gpu #(
             op <= rx_byte;
             case (rx_byte)
               OP_PING:   tx_next <= "T";
-              OP_RESET:  soft_reset <= 1'b1;
+              OP_RESET: begin
+                soft_reset <= 1'b1;
+                overflow   <= 1'b0;   // RESET clears every sticky error flag
+              end
               OP_STATUS: begin
                 st[0] <= cmd_free[7:0];
                 st[1] <= cmd_free[15:8];

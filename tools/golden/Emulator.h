@@ -11,6 +11,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <array>
 #include <deque>
@@ -121,6 +122,12 @@ class TransportEmulator : public ITransport {
     int u16() { int v = u8(); return v | (u8() << 8); }
     int i16() { return static_cast<int16_t>(u16()); }
     uint16_t color() { int lo = u8(); return static_cast<uint16_t>(lo | (u8() << 8)); }
+    void bytes(uint8_t* dst, size_t n) {
+      size_t avail = p < b.size() ? b.size() - p : 0, k = n < avail ? n : avail;
+      if (k) memcpy(dst, b.data() + p, k);
+      if (n > k) memset(dst + k, 0, n - k);
+      p += n;
+    }
   };
 
   void put(int x, int y, uint16_t c, bool clip = true) {
@@ -246,6 +253,21 @@ class TransportEmulator : public ITransport {
         }
         break;
       }
+      case op::kYuvMacroblocks: {
+        int n = r.u16();
+        for (int m = 0; m < n; ++m) {
+          int x = r.i16(), y = r.i16();
+          uint8_t cb[64], cr[64];
+          r.bytes(cb, 64);
+          r.bytes(cr, 64);
+          for (int j = 0; j < 16; ++j)
+            for (int i = 0; i < 16; ++i) {
+              int k = (j / 2) * 8 + i / 2;
+              put(x + i, y + j, yuvToStored(r.u8(), cb[k], cr[k]));
+            }
+        }
+        break;
+      }
       case op::kReadRect: {
         int x = r.u16(), y = r.u16(), w = r.u16(), h = r.u16();
         for (int j = 0; j < h; ++j)
@@ -260,6 +282,20 @@ class TransportEmulator : public ITransport {
     }
   }
 
+ public:
+  /// BT.601 limited range -> stored (wire-order) RGB565, the formula
+  /// documented for YUV_MBS in docs/protocol.md.
+  static uint16_t yuvToStored(int y, int u, int v) {
+    auto clip = [](int t) { return t < 0 ? 0 : (t > 255 ? 255 : t); };
+    int c = y - 16, d = u - 128, e = v - 128;
+    int r = clip((298 * c + 409 * e + 128) >> 8);
+    int g = clip((298 * c - 100 * d - 208 * e + 128) >> 8);
+    int b = clip((298 * c + 516 * d + 128) >> 8);
+    uint16_t native = static_cast<uint16_t>(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+    return static_cast<uint16_t>((native << 8) | (native >> 8));
+  }
+
+ protected:
   void span(int xa, int xb, int y, uint16_t c) {
     for (int x = xa; x <= xb; ++x) put(x, y, c);
   }

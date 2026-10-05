@@ -28,7 +28,15 @@ git clone https://github.com/pschatzmann/TangNanoGPU.git
 
 Alternatively, download each repository as a ZIP and use **Sketch → Include Library → Add .ZIP Library…** in the Arduino IDE.
 
-Optional, only for `examples/lvgl-example`: install **lvgl** (v9) from the Library Manager and provide an `lv_conf.h` with `#define LV_COLOR_DEPTH 16`.
+Optional libraries, only needed for some examples:
+
+| Library | Example | Notes |
+|---|---|---|
+| [TinyMaterialDesign](https://github.com/pschatzmann/TinyMaterialDesign) | `material-design` | see [tinymaterialdesign.md](tinymaterialdesign.md) |
+| [TinyH264](https://github.com/pschatzmann/TinyH264) | `video-player` | GPL-3.0; see [video.md](video.md) |
+| lvgl (v9, Library Manager) | `lvgl-example` | needs an `lv_conf.h` with `#define LV_COLOR_DEPTH 16` |
+
+Install them the same way (`git clone` into `libraries`).
 
 ### 2. Install a board core
 
@@ -73,7 +81,7 @@ BUSY is optional but strongly recommended: without it, the library has to poll t
 
 1. **File → Examples → TangNanoGPU → ping.** Open the Serial Monitor at 115200 baud. It prints the gateware version and a status line every half second while the screen cycles through colours.
 2. **basic-example**: TinyGPU shapes and text on HDMI.
-3. Then `bouncing-ball`, `sprite-blit`, `wireframe-cube` and `lvgl-example`.
+3. Then `bouncing-ball`, `sprite-blit` and `wireframe-cube`, and, with the optional libraries, `material-design`, `video-player` and `lvgl-example`.
 
 A minimal sketch:
 
@@ -168,7 +176,7 @@ All commands run in `gateware/`:
 | Command | What it does | Time |
 |---|---|---|
 | `make sim` | unit testbenches + full-chip self-test | ~10 s |
-| `make golden` | renders a test scene in TinyGPU and in the RTL and compares all 76,800 pixels. Needs TinyGPU next to this library, or `TINYGPU_DIR=/path/to/TinyGPU` | ~1 min |
+| `make golden` | renders test scenes in software and in the RTL and compares all 76,800 pixels of each (see [architecture.md](architecture.md#exactness-against-tinygpu)). Needs TinyGPU next to this library, or `TINYGPU_DIR=/path/to/TinyGPU`. The TinyMaterialDesign and video scenes run only if those libraries are found (`TINYMD_DIR`, `TINYH264_DIR`) | GOLDEN_TIME |
 | `make bitstream` | yosys → `tools/fix_bram_oce.py` → nextpnr → gowin_pack, writes `build/top_tangnano20k.fs` | ~8 min |
 | `make load` | loads the bitstream into SRAM (lost at power-off) | |
 | `make flash` | writes it to the onboard flash | |

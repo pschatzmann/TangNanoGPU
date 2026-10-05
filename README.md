@@ -41,6 +41,11 @@ pushing.
     draw on it directly.
   - `DisplayDriverTangNano` is a TinyGPU `DisplayDriver<RGB565>`. Use it
     with `DeviceOutput` or with `LVGLDriver` for LVGL.
+- **Video:** decoded video, for example H.264 from
+  [TinyH264](https://github.com/pschatzmann/TinyH264), is sent as YUV 4:2:0
+  macroblocks (1.5 bytes per pixel). The FPGA converts them to RGB565, and
+  `YUVFrameWriter` sends only the macroblocks that changed. See
+  [docs/video.md](docs/video.md).
 - **Material Design 3 GUIs:**
   [TinyMaterialDesign](https://github.com/pschatzmann/TinyMaterialDesign)
   screens draw straight onto `SurfaceTangNano`, including dialogs, drawers
@@ -67,7 +72,9 @@ troubleshooting, are in [docs/installation.md](docs/installation.md).
    [TinyGPU](https://github.com/pschatzmann/TinyGPU) in your Arduino
    `libraries` folder. Add
    [TinyMaterialDesign](https://github.com/pschatzmann/TinyMaterialDesign)
-   for widget GUIs, or lvgl for `lvgl-example`.
+   for widget GUIs,
+   [TinyH264](https://github.com/pschatzmann/TinyH264) for `video-player`,
+   or lvgl for `lvgl-example`.
 4. **Check the link:** run `examples/ping`, then `examples/basic-example`.
 
 ```cpp
@@ -123,6 +130,17 @@ if (ui.isDirty()) {
 Touch input comes from any TinyGPU `TouchDriver`. The `material-design`
 example includes one driven by Serial commands.
 
+### Video
+
+```cpp
+YUVFrameWriter video(gpu);
+
+// in the TinyH264 frame callback:
+if (video.macroblocks() == 0) video.begin(d.width(), d.height());  // centred
+video.writeFrame(d.y(), d.strideY(), d.u(), d.v(), d.strideUV());   // changed macroblocks only
+screen.swap();
+```
+
 ## Examples
 
 | Example | Shows |
@@ -133,6 +151,7 @@ example includes one driven by Serial commands.
 | `sprite-blit` | 40 sprites blitted from SDRAM per frame |
 | `wireframe-cube` | TinyGPU `WireFrame3D` |
 | `lvgl-example` | LVGL v9 through `LVGLDriver` + `DisplayDriverTangNano` |
+| `video-player` | H.264 clip decoded by TinyH264 on the MCU; changed YUV macroblocks shown via the FPGA ([docs](docs/video.md)) |
 | `material-design` | [TinyMaterialDesign](https://github.com/pschatzmann/TinyMaterialDesign) widgets rendered by the FPGA, with no MCU framebuffer ([docs](docs/tinymaterialdesign.md)) |
 
 ## Performance
@@ -153,12 +172,20 @@ TinyMaterialDesign screen redraw is about 20 KB of commands (20–40 ms).
 While a modal dialog is open, its full-screen scrim needs a readback, which
 takes about 0.5 s per redraw.
 
+For video, a 16×16 macroblock is 388 bytes on SPI, about 0.2 ms at 16 MHz.
+In the test clip about 12% of macroblocks change per frame: roughly 14 KB,
+or 7 ms per frame. The FPGA converts a macroblock in about 18 µs (estimated
+from the state machine), so decoding on the MCU is usually what limits the
+frame rate.
+
 ## Documentation
 
 - [docs/installation.md](docs/installation.md): Arduino setup, wiring,
   loading the bitstream, and the FPGA toolchain
 - [docs/tinymaterialdesign.md](docs/tinymaterialdesign.md): Material Design 3
   widgets on HDMI, input options, performance
+- [docs/video.md](docs/video.md): video playback, YUV macroblocks, change
+  detection, performance
 - [docs/architecture.md](docs/architecture.md): design, clocks, SDRAM
   bursts, scanout, resources, verification status
 - [docs/protocol.md](docs/protocol.md): the SPI command set
@@ -170,14 +197,18 @@ takes about 0.5 s per redraw.
 
 | Area | Status |
 |---|---|
-| RTL simulation | Passes: unit testbenches, a full-chip test over the real SPI pins, and the pixel-exact golden-model test |
+| RTL simulation | Passes: unit testbenches, a full-chip test over the real SPI pins, and the pixel-exact golden-model tests (TinyGPU scene, TinyMaterialDesign, H.264 video) |
 | TinyMaterialDesign | A screen with an open dialog renders pixel-identically, both through a protocol emulator and replayed into the RTL (240 readbacks checked) |
-| Toolchain | Synthesises, routes, meets timing (89 MHz / 82 MHz against 64.8 / 25.2 MHz) and packs |
-| Arduino library | All examples compile for ESP32; `ping`, `basic-example`, `sprite-blit` and `material-design` also for RP2040 |
+| Toolchain | Synthesises, routes, meets timing (82 MHz / 84 MHz against 64.8 / 25.2 MHz) and packs; 41% of the LUTs, 7 of 46 block RAMs |
+| Video | TinyH264-decoded frames match TinyH264's own RGB565 output pixel for pixel through `YUVFrameWriter`: all 30 frames via the protocol emulator, the first 8 replayed into the RTL. The converter matches for all 16.7 M YUV inputs |
+| Arduino library | All examples compile for ESP32; `ping`, `basic-example`, `sprite-blit`, `material-design` and `video-player` also for RP2040 |
 | Real hardware | **Not tested yet.** No board was attached during development; see the bring-up order in [docs/architecture.md](docs/architecture.md#verification-status) |
 
 ## License
 
 Apache-2.0. The SDRAM init and read timing follow nand2mario's Apache-2.0
 controller (via [TangNanoAI](https://github.com/pschatzmann/TangNanoAI)).
-The HDMI output structure follows Apicula's DVI example.
+The HDMI output structure follows Apicula's DVI example. The test clips are
+generated from ffmpeg's built-in test sources (`tools/golden/clips`). This
+library does not depend on TinyH264, which is GPL-3.0; sketches that link
+it, such as `video-player`, fall under that license.

@@ -7,6 +7,7 @@
  *   TangNanoGPU           - protocol commands (fill, line, circle, blit ...)
  *   SurfaceTangNano       - TinyGPU ISurface<RGB565> drawn by the FPGA
  *   DisplayDriverTangNano - TinyGPU DisplayDriver<RGB565> (HDMI "panel")
+ *   YUVFrameWriter        - decoded video (I420) as changed macroblocks
  *
  * See README.md and docs/ for wiring, protocol and gateware.
  */
@@ -24,6 +25,7 @@
 #include "TangNanoGPU/GPUDevice.h"
 #include "TangNanoGPU/SurfaceTangNano.h"
 #include "TangNanoGPU/DisplayDriverTangNano.h"
+#include "TangNanoGPU/YUVFrameWriter.h"
 #if defined(ARDUINO)
 #include "TangNanoGPU/TransportSPI.h"
 #endif

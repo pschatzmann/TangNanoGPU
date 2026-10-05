@@ -20,6 +20,10 @@
 #include "TinyGPU.h"
 #include "TangNanoGPU.h"
 #include "Emulator.h"
+#if __has_include("TinyH264Decoder.h") && defined(GOLDEN_CLIP)
+#include "TinyH264Decoder.h"
+#define HAVE_TINYH264 1
+#endif
 #if __has_include("TinyMaterialDesign.h")
 #include "TinyMaterialDesign.h"
 #define HAVE_TINYMD 1
@@ -218,6 +222,112 @@ static int tmdGolden(const std::string& dir) {
 }
 #endif
 
+#ifdef HAVE_TINYH264
+// Video: decodes clips/test_320x240.264 with TinyH264 and shows every frame
+// through YUVFrameWriter (alternating framebuffers, picture shifted so it
+// is cropped at the left/bottom edges). Each frame must match TinyH264's
+// own toRGB565() output; the stream is recorded for the RTL replay.
+static int videoGolden(const std::string& dir) {
+  // 1. our converter == TinyH264's yuvToRgb8() + RGB565 packing, all inputs
+  long formulaDiffs = 0;
+  for (int y = 0; y < 256; ++y)
+    for (int u = 0; u < 256; ++u)
+      for (int v = 0; v < 256; ++v) {
+        uint8_t r, g, b;
+        tinyh264::yuvToRgb8(y, u, v, &r, &g, &b);
+        uint16_t native = static_cast<uint16_t>(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+        uint16_t stored = TransportEmulator::yuvToStored(y, u, v);
+        if (static_cast<uint16_t>((stored << 8) | (stored >> 8)) != native) ++formulaDiffs;
+      }
+
+  FILE* f = fopen(GOLDEN_CLIP, "rb");
+  if (!f) { printf("golden video: cannot open %s\n", GOLDEN_CLIP); return 1; }
+  std::vector<uint8_t> clip;
+  for (int c; (c = fgetc(f)) != EOF;) clip.push_back(static_cast<uint8_t>(c));
+  fclose(f);
+
+  struct Ctx {
+    TransportEmulator emu;
+    TangNanoGPU gpu{emu};
+    YUVFrameWriter video{gpu};
+    std::vector<uint16_t> rgb, last;
+    int frames = 0, frameDiffs = 0, w = 0, h = 0;
+    size_t sent = 0, total = 0;
+    size_t rtlRecords = 0;  // transactions of the first kRtlFrames frames
+  } ctx;
+  // The RTL replay covers the first frames only (simulating all 30 takes
+  // ~20 min): full frames into both buffers plus several partial updates.
+  static constexpr int kRtlFrames = 8;
+  const int ox = -8, oy = 4;  // crop 8 columns left, push 4 rows below the screen
+
+  tinyh264::TinyH264Decoder<> dec;
+  if (!dec.begin()) { printf("golden video: decoder begin failed\n"); return 1; }
+  dec.setByteSwap(false);  // compare native RGB565 (toRGB565 swaps for SPI panels by default)
+  dec.setCallback([](tinyh264::TinyH264Decoder<>& d, void* user) {
+    Ctx& c = *static_cast<Ctx*>(user);
+    if (c.frames == 0) {
+      c.w = d.width();
+      c.h = d.height();
+      c.video.begin(c.w, c.h, ox, oy);
+    }
+    c.gpu.setTarget(c.frames & 1);  // double buffering: alternate targets
+    c.sent += c.video.writeFrame(d.y(), d.strideY(), d.u(), d.v(), d.strideUV());
+    c.total += c.video.macroblocks();
+    c.rgb.assign(static_cast<size_t>(c.w) * c.h, 0);
+    d.toRGB565(c.rgb.data(), c.rgb.size());
+    for (int y = 0; y < c.h; ++y)
+      for (int x = 0; x < c.w; ++x) {
+        int sx = x + ox, sy = y + oy;
+        if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue;
+        if (c.emu.pixel(c.frames & 1, sx, sy) != c.rgb[static_cast<size_t>(y) * c.w + x]) ++c.frameDiffs;
+      }
+    if (c.frames == kRtlFrames - 1) {
+      c.last = c.rgb;
+      c.gpu.flushPixels();
+      c.rtlRecords = c.emu.records().size();
+    }
+    ++c.frames;
+  }, &ctx);
+  dec.write(clip.data(), clip.size());
+  ctx.gpu.flushPixels();
+
+  // expected framebuffer of the last frame's buffer (outside the picture: 0)
+  f = fopen((dir + "/expected_video.hex").c_str(), "w");
+  if (!f) return 1;
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x) {
+      int px = x - ox, py = y - oy;
+      uint16_t v = (px >= 0 && py >= 0 && px < ctx.w && py < ctx.h)
+                       ? ctx.last[static_cast<size_t>(py) * ctx.w + px] : 0;
+      fprintf(f, "%04x\n", v);
+    }
+  fclose(f);
+  f = fopen((dir + "/video_buffer.txt").c_str(), "w");
+  if (f) { fprintf(f, "%d\n", (kRtlFrames - 1) & 1); fclose(f); }
+
+  f = fopen((dir + "/cmds_video.txt").c_str(), "w");
+  if (!f) return 1;
+  size_t bytes = 0;
+  for (size_t i = 0; i < ctx.rtlRecords; ++i) {
+    const auto& r = ctx.emu.records()[i];
+    fprintf(f, "%x", static_cast<unsigned>(r.mosi.size()));
+    for (uint8_t b : r.mosi) fprintf(f, " %02x", b);
+    fprintf(f, "\n");
+    bytes += r.mosi.size();
+  }
+  fclose(f);
+  size_t totalBytes = 0;
+  for (const auto& r : ctx.emu.records()) totalBytes += r.mosi.size();
+  bool ok = formulaDiffs == 0 && ctx.frameDiffs == 0 && ctx.frames >= kRtlFrames;
+  printf("golden video: %d frames %dx%d, %zu of %zu macroblocks sent (%.0f%%), %zu SPI bytes; "
+         "converter vs TinyH264: %ld diffs; frames vs TinyH264 toRGB565: %d diffs -> %s "
+         "(RTL replay: first %d frames, %zu bytes)\n",
+         ctx.frames, ctx.w, ctx.h, ctx.sent, ctx.total, 100.0 * ctx.sent / (ctx.total ? ctx.total : 1),
+         totalBytes, formulaDiffs, ctx.frameDiffs, ok ? "PASS" : "FAIL", kRtlFrames, bytes);
+  return ok ? 0 : 1;
+}
+#endif
+
 int main(int argc, char** argv) {
   std::string dir = argc > 1 ? argv[1] : ".";
 
@@ -248,10 +358,16 @@ int main(int argc, char** argv) {
   }
   fclose(f);
   printf("golden: %zu transactions, %zu bytes\n", rec.transactions().size(), bytes);
+  int rc = 0;
 #ifdef HAVE_TINYMD
-  return tmdGolden(dir);
+  rc |= tmdGolden(dir);
 #else
   printf("golden tmd: skipped (TinyMaterialDesign not found)\n");
-  return 0;
 #endif
+#ifdef HAVE_TINYH264
+  rc |= videoGolden(dir);
+#else
+  printf("golden video: skipped (TinyH264 not found)\n");
+#endif
+  return rc;
 }

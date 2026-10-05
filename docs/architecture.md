@@ -13,8 +13,8 @@ The library turns a Tang Nano 20K into a TinyGPU "graphics card".
    │ SPI (≤16 MHz)   ▲ BUSY / MISO
    ▼                 │
  spi_gpu ──► cmd FIFO (4 KB) ──► gpu_exec ──────────────┐ port B (read/write)
-   ▲                                │ span buffer,       │
-   └──── resp FIFO (2 KB) ◄─────────┘ read buffer        ▼
+   ▲                                │ span buffer, read  │
+   └──── resp FIFO (2 KB) ◄─────────┘ buffer, YUV→RGB    ▼
                                                  sdram_ctrl ──► 8 MB SDRAM
  HDMI ◄── dvi_tx ◄── scanout (320×240 → 640×480) ◄──────┘ port A (read, priority)
           TMDS + OSER10     line buffer (dual clock)
@@ -101,6 +101,7 @@ How each command uses these primitives:
 | WRITE_RECT, UPLOAD, MASK | stage one row from the FIFO into the span buffer, then one span write |
 | COPY_RECT | span read of the source row, stage it (3-stage pipeline, 1 pixel per clock, colour key), span write. Rows are copied bottom-up when the destination lies below the source, so overlapping scrolls are correct |
 | READ_RECT | span read, then 2 bytes per pixel into the response FIFO |
+| YUV_MBS | per macroblock: chroma into a LUT-RAM buffer, then each luma row through the YUV→RGB converter into the span buffer and one span write (see below) |
 
 ### Measured performance
 
@@ -120,6 +121,29 @@ The SPI link is the slow part for pixel data. At 10 MHz a full-screen
 Sprites and images that are reused should therefore be uploaded once and
 drawn with `blit()`.
 
+## Video macroblocks (`YUV_MBS`)
+
+Each 16×16 macroblock arrives with its chroma first: Cb and Cr, 128 bytes,
+go into a small LUT-RAM buffer. The 256 luma bytes then stream through a
+two-stage converter:
+
+1. the constant products (298, 409, 100, 208, 516), written as shift-and-add,
+   so no multipliers are needed;
+2. the sums, clipping and RGB565 packing.
+
+The pixels land in the span buffer, and each macroblock row becomes one
+8-word span write, clipped like WRITE_RECT. The formula is TinyH264's
+(see [protocol.md](protocol.md)), so the output matches its `toRGB565()`
+bit for bit (with `toRGB565()`'s default byte swap turned off). Details and
+figures: [video.md](video.md).
+
+Why there is no H.264 decoder in hardware: a decoder needs entropy
+decoding, inverse transforms, intra prediction, quarter-pixel motion
+compensation and deblocking. Even small open-source baseline decoders are
+several times larger than the roughly 12,000 LUTs left here, and yosys 0.33
+does not infer the Gowin DSP blocks. Decoding on the MCU and sending only
+changed YUV macroblocks gives most of the benefit for a few hundred LUTs.
+
 ## Exactness against TinyGPU
 
 The rasterisers reproduce TinyGPU's own integer algorithms:
@@ -132,28 +156,31 @@ Text, arcs and round rectangles are produced on the host by TinyGPU's own
 code (fonts and `ISurface` defaults) and reach the FPGA as MASK, FILL_RECT,
 LINE or PIXELS commands.
 
-`tools/golden/run_golden.sh` renders a scene that uses every command twice:
+`tools/golden/run_golden.sh` (`make golden`) checks this end to end with
+three scenes. Each is rendered by the software reference and by the host
+library, whose recorded SPI stream is replayed into the full RTL with an
+SDRAM model. All 76,800 pixels must match:
 
-1. with TinyGPU's software `Surface<RGB565>`;
-2. through `SurfaceTangNano` with a recording transport, replayed into the
-   full RTL with an SDRAM model.
-
-All 76,800 pixels must match.
+| Scene | Reference | Covers |
+|---|---|---|
+| TinyGPU test scene | TinyGPU's software `Surface<RGB565>` | every drawing primitive, text, clipping, sprites, uploads/blits, scrolling, `setPixel` runs, a `WireFrame3D` cube |
+| TinyMaterialDesign screen with an open dialog (needs TinyMaterialDesign) | the same screen drawn into a software surface | widgets, and the dialog scrim with 240 readbacks; the RTL's READ_DATA bytes must equal the protocol emulator's |
+| H.264 video (needs TinyH264) | TinyH264's `toRGB565()` | `YUV_MBS` and `YUVFrameWriter`: 30 frames through the emulator, the first 8 through the RTL, double-buffered and cropped at the screen edges; the converter is also checked against TinyH264 for all 16.7 M YUV inputs |
 
 ## Resources (GW2AR-18C, yosys 0.33 + nextpnr-himbaechel 0.11)
 
 | Resource | Used | Available |
 |---|---|---|
-| LUT4 | 7,115 (34%) | 20,736 |
-| DFF | 1,670 (10%) | 15,552 |
+| LUT4 | 8,685 (41%) | 20,736 |
+| DFF | 1,952 (12%) | 15,552 |
 | BSRAM | 7 (15%) | 46 |
-| RAM16SDP4 (LUT RAM) | 32 (4%) | 648 |
+| RAM16SDP4 (LUT RAM) | 48 (7%) | 648 |
 | rPLL | 2 (100%) | 2 |
 
 | Clock | Required | Fmax after routing |
 |---|---|---|
-| `clk` | 64.8 MHz | 89.2 MHz |
-| `clk_pix` | 25.2 MHz | 82.3 MHz |
+| `clk` | 64.8 MHz | 82.0 MHz |
+| `clk_pix` | 25.2 MHz | 83.6 MHz |
 
 The 7 BSRAM blocks are: line buffer 1, command FIFO 2, response FIFO 1,
 span buffer 2, read buffer 1.
@@ -180,8 +207,10 @@ span buffer 2, read buffer 1.
 - SDRAM controller: against a protocol-checking SDRAM model, covering full
   row bursts, byte masks, port contention and refresh.
 - Full chip over its SPI pins: PING, STATUS, READ_RECT readback, RESET and
-  bad-opcode recovery, and the golden scene. All of these pass at
-  10.8 MHz and at 16.2 MHz SCK, with 4 MHz reads.
+  bad-opcode recovery. These pass at 10.8 MHz and at 16.2 MHz SCK, with
+  4 MHz reads.
+- The three golden-model scenes above (TinyGPU, TinyMaterialDesign, H.264
+  video), each pixel-identical to its reference.
 
 **Verified with the real toolchain:** the design synthesises, places,
 routes, meets timing and packs into a bitstream.
@@ -193,6 +222,7 @@ written. Bring-up order:
    OSER10/TLVDS output.
 2. Run `examples/ping`. This checks the SPI wiring and SDRAM init.
 3. Run `examples/basic-example`.
+4. Optionally run `examples/material-design` and `examples/video-player`.
 
 If the SDRAM reads back wrong data, check the `clk_sdram` phase first
 (`PSDA_SEL` in `rtl/clocks.v`).
