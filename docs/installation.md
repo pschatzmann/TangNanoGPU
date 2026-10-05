@@ -12,9 +12,9 @@ This part sets up a microcontroller (ESP32, RP2040, STM32, …) to drive a Tang 
 ### What you need
 
 - A Sipeed **Tang Nano 20K** and a USB-C cable
-- A 3.3 V microcontroller with hardware SPI (the examples cover ESP32 and RP2040)
+- A 3.3 V microcontroller with hardware SPI (the examples cover ESP32, ESP32-S3 and RP2040; quad SPI needs an ESP32-family chip)
 - An HDMI monitor or TV that accepts 640×480@60 (almost all do)
-- 6 jumper wires
+- 6 jumper wires for SPI (8 for quad SPI), kept short
 
 ### 1. Install the Arduino libraries
 
@@ -60,7 +60,7 @@ Use `openFPGALoader -b tangnano20k gateware/build/top_tangnano20k.fs` (without `
 
 On Linux, if openFPGALoader reports `unable to open ftdi device`, install its udev rules (see the openFPGALoader documentation) or run it once with `sudo`.
 
-**Check:** connect the monitor and hold button **S2**. You should see eight colour bars. LED 0 blinks as a heartbeat; LED 1 lights once the SDRAM is ready.
+**Check:** connect the monitor and hold button **S2**. You should see eight colour bars. LED 0 blinks as a heartbeat; LED 1 lights once the SDRAM is ready. LED 4 ("SPI active") may stay on while no MCU is connected, because CS then floats low; it goes off once the MCU drives CS.
 
 ### 4. Wire the microcontroller
 
@@ -92,7 +92,7 @@ sketch to match. Full details: [pinout.md](pinout.md).
 
 ### 5. Run the examples
 
-1. **File → Examples → TangNanoGPU → ping.** Open the Serial Monitor at 115200 baud. It prints the gateware version and a status line every half second while the screen cycles through colours.
+1. **File → Examples → TangNanoGPU → ping.** Open the Serial Monitor at 115200 baud. It prints the gateware version, the link in use and whether the bitstream supports quad SPI, then a status line every half second while the screen cycles through colours. `link-benchmark` measures the link speed.
 2. **basic-example**: TinyGPU shapes and text on HDMI.
 3. Then `bouncing-ball`, `sprite-blit` and `wireframe-cube`, and, with the optional libraries, `material-design`, `video-player` and `lvgl-example`.
 
@@ -140,6 +140,7 @@ This part sets up the open-source FPGA toolchain to simulate and rebuild the Tan
 | [openFPGALoader](https://github.com/trabucayre/openFPGALoader) | any recent | programming the board |
 | [Icarus Verilog](https://github.com/steveicarus/iverilog) | 11 | simulation (`make sim`) |
 | cmake, a C++17 compiler, Python 3 | | golden-model test (`make golden`) |
+| [arduino-cli](https://arduino.github.io/arduino-cli/) with the ESP32 and RP2040 cores | | compiling the examples (`make examples`, optional) |
 | GNU make | | build |
 
 **Apicula 0.34 or newer is required.** The design uses both of the chip's PLLs, and `gowin_pack` 0.33 crashes on the second one with `UnboundLocalError: cannot access local variable 'offx'`.

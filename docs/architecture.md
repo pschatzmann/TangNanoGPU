@@ -127,8 +127,10 @@ How each command uses these primitives:
 
 ### Measured performance
 
-Engine time per command, from `tb_top.v` at 64.8 MHz, including the time
-the command takes to arrive over a 16 MHz SPI link:
+Engine time per command, from `tb_top.v` at 64.8 MHz. These were measured
+with the earlier 16 MHz link and include the time the command takes to
+arrive; the engine itself is unchanged, and with today's faster link the
+short commands arrive sooner:
 
 | Operation | Time |
 |---|---|
@@ -182,7 +184,7 @@ LINE or PIXELS commands.
 `tools/golden/run_golden.sh` (`make golden`) checks this end to end with
 three scenes. Each is rendered by the software reference and by the host
 library, whose recorded SPI stream is replayed into the full RTL with an
-SDRAM model. All 76,800 pixels must match:
+SDRAM model, over quad SPI at ~42 MHz. All 76,800 pixels must match:
 
 | Scene | Reference | Covers |
 |---|---|---|
@@ -194,7 +196,7 @@ SDRAM model. All 76,800 pixels must match:
 
 | Resource | Used | Available |
 |---|---|---|
-| LUT4 | 8,458 (40%) | 20,736 |
+| LUT4 | 8,420 (40%) | 20,736 |
 | DFF | 2,012 (12%) | 15,552 |
 | BSRAM | 7 (15%) | 46 |
 | RAM16SDP4 (LUT RAM) | 51 (7%) | 648 |
@@ -202,9 +204,13 @@ SDRAM model. All 76,800 pixels must match:
 
 | Clock | Required | Fmax after routing |
 |---|---|---|
-| `clk` | 64.8 MHz | 83.6 MHz |
-| `clk_pix` | 25.2 MHz | 82.7 MHz |
-| `spi_sck` | ~40 MHz | 354 MHz (register to register) |
+| `clk` | 64.8 MHz | 93.0 MHz |
+| `clk_pix` | 25.2 MHz | 88.7 MHz |
+| `spi_sck` | ~40 MHz | 379 MHz (register to register) |
+
+Post-route Fmax varies by roughly ±10% between builds (placement is not
+deterministic); it has stayed above the required clocks in every build so
+far.
 
 The `spi_sck` figure covers only paths inside the FPGA. At 40 MHz the real
 limit is the board-level timing: MOSI/IO setup against SCK through jumper
@@ -246,8 +252,21 @@ span buffer 2, read buffer 1.
 **Verified with the real toolchain:** the design synthesises, places,
 routes, meets timing and packs into a bitstream.
 
-**Not yet verified on hardware:** no board was attached while this was
-written. Bring-up order:
+**Verified on a real Tang Nano 20K** (bitstream loaded into SRAM, no MCU
+or monitor attached yet):
+
+- LED 0 blinks: both PLLs, the ÷5 clock divider and the pixel timing run.
+- LED 1 on: the SDRAM controller's init sequence completes.
+- LEDs 2, 3 and 5 off: no errors, engine idle, scanout keeping up. This
+  first bring-up found a stuck "scanout late" flag left over from the
+  200 µs SDRAM power-up wait. It is fixed, and `make sim` now has a
+  self-test with the real 200 µs wait.
+- LED 4 on without an MCU: CS (pin 30) reads low when nothing is connected,
+  although the constraint asks for a pull-up. A connected MCU drives CS
+  high when idle, so this only matters for a bare board.
+
+**Not yet verified on hardware:** HDMI picture, SPI/quad link, drawing.
+Bring-up order:
 
 1. Hold S2 and look for colour bars. This checks HDMI, the PLLs and the
    OSER10/TLVDS output.
@@ -257,5 +276,8 @@ written. Bring-up order:
 3. Run `examples/basic-example`.
 4. Optionally run `examples/material-design` and `examples/video-player`.
 
-If the SDRAM reads back wrong data, check the `clk_sdram` phase first
-(`PSDA_SEL` in `rtl/clocks.v`).
+If drawings come out corrupted at the default link clocks, lower them first
+(for example `TransportSPI(SPI, cs, busy, 10000000)`): 32–40 MHz over jumper
+wires is the part most likely to differ from simulation. If the SDRAM reads
+back wrong data, check the `clk_sdram` phase (`PSDA_SEL` in
+`rtl/clocks.v`).

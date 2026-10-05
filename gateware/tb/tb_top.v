@@ -39,7 +39,10 @@ module tb_top;
   wire nCS, nWE, nRAS, nCAS, SCLK, CKE;
   wire [3:0] DQM;
 
-  top_tangnano20k #(.SIM_INIT_US(2)) dut (
+  `ifndef TB_INIT_US
+`define TB_INIT_US 2   // SDRAM power-up wait; -DTB_INIT_US=200 for the real value
+`endif
+  top_tangnano20k #(.SIM_INIT_US(`TB_INIT_US)) dut (
       .clk27(clk), .btn_s1(btn_s1), .btn_s2(btn_s2), .led_n(led_n),
       .tmds_clk_p(tcp), .tmds_clk_n(tcn), .tmds_d_p(tdp), .tmds_d_n(tdn),
       .spi_sck(sck), .spi_mosi(mosi), .spi_miso(miso), .spi_cs_n(cs_n),
@@ -304,9 +307,10 @@ module tb_top;
       // wrong address must be ignored (MISO tri-stated -> reads as z/x, engine untouched)
       cs_begin; spi_byte(8'h05); spi_byte(8'h20); spi_byte(8'h00); cs_end;
 
-      // STATUS: sdram ready, not busy, cmd_free = 4095
+      // STATUS: sdram ready, not busy, cmd_free = 4095, no sticky flags
+      // (in particular no "scanout late" left over from the SDRAM power-up)
       read_txn(8'h03, 7);
-      if (!(resp[2] & 8'h10) || (resp[2] & 8'h01) || {resp[1], resp[0]} != 16'd4095) begin
+      if (!(resp[2] & 8'h10) || (resp[2] & 8'h4d) || {resp[1], resp[0]} != 16'd4095) begin
         $display("FAIL status: free=%0d flags=%b", {resp[1], resp[0]}, resp[2]);
         errors = errors + 1;
       end

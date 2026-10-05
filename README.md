@@ -11,15 +11,15 @@ graphics card for
 
 
 Your microcontroller (ESP32, RP2040, STM32, …) keeps calling TinyGPU's
-drawing API. The calls go over SPI as short commands. The FPGA draws them
+drawing API. The calls go over SPI (or quad SPI) as short commands. The FPGA draws them
 into a framebuffer in its SDRAM and sends the picture to HDMI in the
 background, so the MCU needs no framebuffer of its own and does no pixel
 pushing.
 
 ```
- ESP32 / RP2040 ──SPI──▶ Tang Nano 20K ──HDMI──▶ monitor
- TinyGPU calls           draws in hardware,       640×480@60
-                         8 MB SDRAM framebuffer
+ ESP32 / RP2040 ──SPI / QSPI──▶ Tang Nano 20K ──HDMI──▶ monitor
+ TinyGPU calls                  draws in hardware,       640×480@60
+                                8 MB SDRAM framebuffer
 ```
 
 ## Features
@@ -196,21 +196,36 @@ frame rate.
   detection, performance
 - [docs/architecture.md](docs/architecture.md): design, clocks, SDRAM
   bursts, scanout, resources, verification status
-- [docs/protocol.md](docs/protocol.md): the SPI command set
+- [docs/protocol.md](docs/protocol.md): the link layer (SPI / quad SPI) and
+  the command set
 - [docs/pinout.md](docs/pinout.md): wiring and on-board pins
 - [docs/building.md](docs/building.md): make targets for simulation and
   building the bitstream (rebuilding needs Apicula ≥ 0.34)
+
+## Testing
+
+All checks run from `gateware/`:
+
+| Command | What it confirms |
+|---|---|
+| `make test` | everything below except the bitstream |
+| `make sim` | unit testbenches and the full-chip self-test over SPI and quad SPI (~20 s) |
+| `make golden` | the three pixel-exact golden-model scenes (TinyGPU, TinyMaterialDesign, H.264 video; ~1–45 min depending on installed libraries) |
+| `make examples` | every example compiles for ESP32, ESP32-S3 and RP2040, including the quad variants |
+| `make bitstream` | the design builds and meets timing |
+
+Details: [docs/installation.md](docs/installation.md#build-and-test).
 
 ## Status
 
 | Area | Status |
 |---|---|
-| RTL simulation | Passes: unit testbenches, a full-chip test over the real SPI pins, and the pixel-exact golden-model tests (TinyGPU scene, TinyMaterialDesign, H.264 video) |
+| RTL simulation | Passes: unit testbenches, a full-chip test over the real pins (SPI at 10.8 and ~42 MHz, quad SPI at ~42 MHz), and the pixel-exact golden-model tests (TinyGPU scene, TinyMaterialDesign, H.264 video) |
 | TinyMaterialDesign | A screen with an open dialog renders pixel-identically, both through a protocol emulator and replayed into the RTL (240 readbacks checked) |
-| Toolchain | Synthesises, routes, meets timing (84 MHz / 83 MHz against 64.8 / 25.2 MHz) and packs; 40% of the LUTs, 7 of 46 block RAMs |
+| Toolchain | Synthesises, routes, meets timing (93 MHz / 89 MHz against 64.8 / 25.2 MHz) and packs; 40% of the LUTs, 7 of 46 block RAMs |
 | Video | TinyH264-decoded frames match TinyH264's own RGB565 output pixel for pixel through `YUVFrameWriter`: all 30 frames via the protocol emulator, the first 8 replayed into the RTL. The converter matches for all 16.7 M YUV inputs |
 | Arduino library | All examples compile for ESP32; `ping`, `basic-example`, `sprite-blit`, `material-design` and `video-player` also for RP2040 |
-| Real hardware | **Not tested yet.** No board was attached during development; see the bring-up order in [docs/architecture.md](docs/architecture.md#verification-status) |
+| Real hardware | **In progress.** On a real Tang Nano 20K the clocks, HDMI timing generator and SDRAM initialisation run, and no error flags are set. HDMI picture, SPI link and drawing are not tested yet; see [docs/architecture.md](docs/architecture.md#verification-status) |
 
 ## License
 

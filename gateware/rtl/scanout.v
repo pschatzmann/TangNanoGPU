@@ -159,7 +159,7 @@ module scanout #(
           front_buf   <= show_buf;
           frame_start <= 1'b1;
         end
-        if (busy) late <= 1'b1;
+        if (busy && !clear_late) late <= 1'b1;
         a_req <= 1'b1;
         busy  <= 1'b1;
         col   <= 8'd0;

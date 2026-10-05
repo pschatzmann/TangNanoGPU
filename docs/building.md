@@ -22,6 +22,7 @@ or `make load` / `make flash` in `gateware/`.
 | openFPGALoader | any recent | |
 | iverilog | ≥ 11 | simulation |
 | cmake, C++17 compiler, Python 3 | | golden-model test |
+| arduino-cli + ESP32/RP2040 cores | | `make examples` (optional) |
 
 The [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build) ships
 all of these. If your system Apicula is older, install a newer `gowin_pack`
@@ -45,6 +46,9 @@ make -C gateware bitstream GOWIN_PACK=~/apycula/bin/gowin_pack
 
 `make bitstream` prints LUT/BSRAM/PLL use and the post-route Fmax at the
 end. Both clocks must stay above 64.8 MHz (`clk`) and 25.2 MHz (`clk_pix`).
+The `u_spi.sck` figure only covers register-to-register paths inside the
+FPGA; see [architecture.md](architecture.md#resources-gw2ar-18c-yosys-033--nextpnr-himbaechel-011)
+for what limits the SPI clock in practice.
 
 ### Interface option
 

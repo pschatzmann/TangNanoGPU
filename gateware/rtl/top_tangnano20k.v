@@ -170,7 +170,10 @@ module top_tangnano20k #(
   scanout u_scanout (
       .clk(clk), .rst(rst),
       .show_buf(show_buf), .front_buf(front_buf), .frame_start(frame_start),
-      .late(late), .clear_late(soft_reset),
+      .late(late),
+      // late is meaningless until the SDRAM is initialised (200us of fetches
+      // that can't complete yet at power-up), so it starts counting after that
+      .clear_late(soft_reset | !sdram_ready),
       .a_req(a_req), .a_addr(a_addr), .a_len(a_len), .a_ack(a_ack),
       .a_rvalid(a_rvalid), .a_rdata(rdata), .a_done(a_done),
       .clk_pix(clk_pix), .rst_pix(rst_pix), .test_pattern(btn2_s[1]),

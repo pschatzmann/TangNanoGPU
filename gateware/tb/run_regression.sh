@@ -25,6 +25,9 @@ run tb_sdram_ctrl   ""          tb/tb_sdram_ctrl.v tb/sdram_model.v rtl/sdram_ct
 run tb_top_spi10    "+selftest"                    tb/tb_top.v tb/sdram_model.v $RTL
 run tb_top_spi42    "+selftest +sckns=12"          tb/tb_top.v tb/sdram_model.v $RTL
 run tb_top_qspi42   "+selftest +sckns=12 +quad"    tb/tb_top.v tb/sdram_model.v $RTL
+# real 200us SDRAM power-up wait (catches start-up effects like a stuck
+# "scanout late" flag, which the shortened 2us simulation wait hides)
+run tb_top_init200  "+selftest" -DTB_INIT_US=200   tb/tb_top.v tb/sdram_model.v $RTL
 
 if [[ $fail -ne 0 ]]; then
   echo "REGRESSION FAILED"

@@ -22,7 +22,7 @@ next to the drawing engine on the GW2AR-18; see
 #include <TangNanoGPU.h>
 #include <TinyH264Decoder.h>
 
-TangNanoGPU gpu(transport);
+TangNanoGPU gpu(transport);   // TransportSPI, or TransportQSPI_ESP32 for 4x the bandwidth
 SurfaceTangNano screen(gpu);
 YUVFrameWriter video(gpu);
 tinyh264::TinyH264Decoder<> decoder;
