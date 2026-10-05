@@ -1,0 +1,3 @@
+# gateware build products (the prebuilt bitstream is kept)
+gateware/build/*
+!gateware/build/top_tangnano20k.fs
