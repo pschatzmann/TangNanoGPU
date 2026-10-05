@@ -3,7 +3,7 @@
 [![Arduino Library](https://img.shields.io/badge/Arduino-Library-blue.svg)](https://www.arduino.cc/reference/en/libraries/)
 [![License: Apache](https://img.shields.io/badge/License-Apache-yellow.svg)](https://opensource.org/licenses/Apache-2.0)
 
-TangNanoGPU makes a **Sipeed Tang Nano 20K** FPGA board into an HDMI
+TangNanoGPU makes a [**Sipeed Tang Nano 20K**](https://wiki.sipeed.com/hardware/en/tang/tang-nano-20k/nano-20k.html) FPGA board into an HDMI
 graphics card for
 [TinyGPU](https://github.com/pschatzmann/TinyGPU).
 
