@@ -5,8 +5,9 @@ The library turns a Tang Nano 20K into a TinyGPU "graphics card".
 - **The microcontroller** runs TinyGPU and sends short drawing commands over
   SPI or quad SPI.
 - **The FPGA** keeps the framebuffer in its 8 MB SDRAM and draws the
-  commands in hardware. It also streams the picture to HDMI continuously,
-  with no help from the MCU.
+  commands in hardware. It also streams the picture to HDMI, or in a
+  `VIDEO=lcd` build to a 480×272 RGB panel, continuously and with no help
+  from the MCU.
 
 ```
  MCU (TinyGPU calls)
@@ -27,8 +28,8 @@ The library turns a Tang Nano 20K into a TinyGPU "graphics card".
 | `spi_sck` | host's SPI clock (≤ ~40 MHz) | MCU | SPI/quad receive shift register and the write side of the receive FIFO |
 | `clk` | 64.8 MHz | rPLL #1 (27 × 12 / 5) | SPI byte parser, FIFOs, drawing engine, SDRAM controller, scanout fetch |
 | `clk_sdram` | 64.8 MHz, shifted 180° | rPLL #1 CLKOUTP | SDRAM chip clock |
-| `clk_pix_x5` | 126 MHz | rPLL #2 (27 × 14 / 3) | OSER10 serialisers (DDR, giving 252 Mbit/s per TMDS lane) |
-| `clk_pix` | 25.2 MHz | CLKDIV ÷5 | video timing, TMDS encoders, line-buffer read |
+| `clk_pix_x5` | 126 MHz | rPLL #2 (27 × 14 / 3) | HDMI: OSER10 serialisers (DDR, giving 252 Mbit/s per TMDS lane) |
+| `clk_pix` | 25.2 MHz (HDMI) / 9 MHz (LCD) | HDMI: CLKDIV ÷5; LCD: rPLL #2 (27 × 1 / 3) | video timing, TMDS encoders or LCD pins, line-buffer read |
 
 The PLL settings come from Apicula's `gowin_pll` calculator and its DVI
 example. They are not hand-derived. Packing two PLLs needs Apicula 0.34 or
@@ -86,6 +87,11 @@ budget (15.6 µs) hold.
 
 ## Scanout (`scanout.v`)
 
+The 320×240 framebuffer is shown at an integer scale inside a window of
+the active video area: HDMI 640×480 with 2× pixel doubling, or the
+480×272 LCD 1:1, centred at (80, 16) with a black border. Timing, scale
+and window are module parameters.
+
 - **Prefetch:** source line *t* is fetched into one half of a 2×160-word
   line buffer while line *t−1* is displayed from the other half. Each
   source line is shown on two video lines, so a fetch has about 63 µs.
@@ -97,8 +103,15 @@ budget (15.6 µs) hold.
   toggle plus a line number that stays stable for a whole video line.
 - **Buffer switch:** `SHOW` only changes the front buffer when line 0 is
   requested, so double buffering never tears.
-- **Colour bars:** holding button S2 shows colour bars instead of the
-  framebuffer, which tests HDMI without the MCU or the SDRAM.
+- **Colour bars:** holding button S2 shows colour bars across the whole
+  active area instead of the framebuffer, which tests the picture output
+  without the MCU or the SDRAM.
+- **LCD output:** in a `VIDEO=lcd` build the RGB565 pixels go straight to
+  the 40-pin connector (R5 G6 B5, DE, HSYNC, VSYNC, pixel clock, backlight
+  enable), with the panel timing of Apicula's `pll-nanolcd` example. The
+  connector shares FPGA pins 33–40 with HDMI and 25–31 with the HDMI
+  build's MCU link, so an LCD build has no HDMI and its MCU link uses pins
+  73–76/71/72/86.
 
 ## Drawing engine (`gpu_exec.v`)
 
@@ -196,17 +209,17 @@ SDRAM model, over quad SPI at ~42 MHz. All 76,800 pixels must match:
 
 | Resource | Used | Available |
 |---|---|---|
-| LUT4 | 8,420 (40%) | 20,736 |
-| DFF | 2,012 (12%) | 15,552 |
+| LUT4 | 8,929 (43%) HDMI / 8,321 (40%) LCD | 20,736 |
+| DFF | 2,013 HDMI / 1,968 LCD (12%) | 15,552 |
 | BSRAM | 7 (15%) | 46 |
 | RAM16SDP4 (LUT RAM) | 51 (7%) | 648 |
 | rPLL | 2 (100%) | 2 |
 
 | Clock | Required | Fmax after routing |
 |---|---|---|
-| `clk` | 64.8 MHz | 93.0 MHz |
-| `clk_pix` | 25.2 MHz | 88.7 MHz |
-| `spi_sck` | ~40 MHz | 379 MHz (register to register) |
+| `clk` | 64.8 MHz | 88.2 MHz (HDMI) / 94.5 MHz (LCD) |
+| `clk_pix` | 25.2 MHz HDMI / 9 MHz LCD | 89.1 MHz (HDMI) / 150 MHz (LCD) |
+| `spi_sck` | ~40 MHz | 366 MHz / 343 MHz (register to register) |
 
 Post-route Fmax varies by roughly ±10% between builds (placement is not
 deterministic); it has stayed above the required clocks in every build so
@@ -240,6 +253,9 @@ span buffer 2, read buffer 1.
 
 - TMDS encoding: every symbol decodes back, and the DC balance holds.
 - Video timing: exact 640×480@60 counts.
+- Video output content (`tb_scanout.v`, separate system and pixel clocks):
+  every pixel of a complete frame, for HDMI (2× scaled, 307,200 pixels) and
+  for the LCD (480×272 with the centred window and black border).
 - SDRAM controller: against a protocol-checking SDRAM model, covering full
   row bursts, byte masks, port contention and refresh.
 - Full chip over its pins: PING, STATUS, READ_RECT readback, RESET and
@@ -265,7 +281,8 @@ or monitor attached yet):
   although the constraint asks for a pull-up. A connected MCU drives CS
   high when idle, so this only matters for a bare board.
 
-**Not yet verified on hardware:** HDMI picture, SPI/quad link, drawing.
+**Not yet verified on hardware:** HDMI picture, the LCD build, SPI/quad
+link, drawing.
 Bring-up order:
 
 1. Hold S2 and look for colour bars. This checks HDMI, the PLLs and the

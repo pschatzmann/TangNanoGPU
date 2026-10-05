@@ -1,0 +1,7 @@
+// Quad-SPI IO2/IO3 for HDMI builds: pins 25/26 (the unused RGB LCD
+// connector's LCD_HS/LCD_VS). Weak pull-ups, so single-line SPI hosts can
+// leave them unconnected.
+IO_LOC  "spi_io2" 25;
+IO_PORT "spi_io2" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC  "spi_io3" 26;
+IO_PORT "spi_io3" IO_TYPE=LVCMOS33 PULL_MODE=UP;

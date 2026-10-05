@@ -25,10 +25,22 @@ module top_tangnano20k #(
     input  wire        btn_s2,
     output wire [5:0]  led_n,
 
+`ifdef DISPLAY_LCD
+    // 40-pin RGB LCD connector (480x272 panel), RGB565 parallel
+    output wire        lcd_clk,
+    output wire        lcd_hsync,
+    output wire        lcd_vsync,
+    output wire        lcd_de,
+    output wire [4:0]  lcd_r,
+    output wire [5:0]  lcd_g,
+    output wire [4:0]  lcd_b,
+    output wire        lcd_bl,     // backlight enable
+`else
     output wire        tmds_clk_p,
     output wire        tmds_clk_n,
     output wire [2:0]  tmds_d_p,
     output wire [2:0]  tmds_d_n,
+`endif
 
     // SPI / quad SPI: IO0 = MOSI, IO1 = MISO (bidirectional in quad mode),
     // IO2/IO3 only in quad builds (default; `define LINK_SPI_ONLY removes them)
@@ -167,7 +179,18 @@ module top_tangnano20k #(
   wire        de, hsync_n, vsync_n;
   wire [7:0]  r, g, b;
 
+`ifdef DISPLAY_LCD
+  // 4.3" 480x272 panel (timing of Apicula's pll-nanolcd example, 9MHz):
+  // the 320x240 framebuffer 1:1, centred (80, 16), black border
+  scanout #(
+      .H_ACTIVE(480), .H_FP(8), .H_SYNC(4), .H_BP(39),
+      .V_ACTIVE(272), .V_FP(8), .V_SYNC(4), .V_BP(8),
+      .SCALE_SHIFT(0), .X0(80), .Y0(16)
+  ) u_scanout (
+`else
+  // HDMI 640x480@60: the framebuffer pixel-doubled
   scanout u_scanout (
+`endif
       .clk(clk), .rst(rst),
       .show_buf(show_buf), .front_buf(front_buf), .frame_start(frame_start),
       .late(late),
@@ -198,12 +221,25 @@ module top_tangnano20k #(
   // so scanout/engine requests issued earlier simply wait (the host
   // library also waits for STATUS.sdram_ready in begin()).
 
+`ifdef DISPLAY_LCD
+  // RGB565 straight to the panel; data changes on the rising pixel clock
+  // edge and the panel samples on the falling one (as in Apicula's example)
+  assign lcd_clk   = clk_pix;
+  assign lcd_hsync = hsync_n;
+  assign lcd_vsync = vsync_n;
+  assign lcd_de    = de;
+  assign lcd_r     = r[7:3];
+  assign lcd_g     = g[7:2];
+  assign lcd_b     = b[7:3];
+  assign lcd_bl    = 1'b1;
+`else
   dvi_tx u_dvi (
       .clk_pix(clk_pix), .clk_pix_x5(clk_pix_x5), .rst(rst_pix),
       .de(de), .hsync_n(hsync_n), .vsync_n(vsync_n), .r(r), .g(g), .b(b),
       .tmds_clk_p(tmds_clk_p), .tmds_clk_n(tmds_clk_n),
       .tmds_d_p(tmds_d_p), .tmds_d_n(tmds_d_n)
   );
+`endif
 
   // ---------------- LEDs ----------------
   reg [23:0] heartbeat;

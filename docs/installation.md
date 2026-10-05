@@ -49,7 +49,7 @@ Use the normal Arduino board support for your MCU, for example:
 
 ### 3. Load the bitstream onto the Tang Nano 20K
 
-The bitstream is in the library at `gateware/build/top_tangnano20k.fs`. Program it with [openFPGALoader](https://github.com/trabucayre/openFPGALoader), which is available as a package on most systems (`sudo apt install openfpgaloader`, `brew install openfpgaloader`, or the Windows release):
+The bitstream is in the library at `gateware/build/top_tangnano20k.fs` (HDMI). For a 4.3" 480×272 RGB panel on the 40-pin connector, use `gateware/build/lcd/top_tangnano20k.fs` instead; that build has no HDMI and uses other FPGA pins for the MCU link (see [pinout.md](pinout.md)). Program it with [openFPGALoader](https://github.com/trabucayre/openFPGALoader), which is available as a package on most systems (`sudo apt install openfpgaloader`, `brew install openfpgaloader`, or the Windows release):
 
 ```bash
 cd ~/Documents/Arduino/libraries/TangNanoGPU
@@ -65,7 +65,9 @@ On Linux, if openFPGALoader reports `unable to open ftdi device`, install its ud
 ### 4. Wire the microcontroller
 
 All signals are 3.3 V. Connect GND first. The SPI pins are the same as for
-the TangNanoFaust and TangNanoAI bitstreams.
+the TangNanoFaust and TangNanoAI bitstreams. **LCD bitstream:** the Tang Nano
+20K side uses pins 73 (SCK), 74 (MOSI), 75 (MISO), 76 (CS), 71 (BUSY), 72
+(IO2) and 86 (IO3) instead; the MCU side stays the same.
 
 | Tang Nano 20K pin | Signal | ESP32 | ESP32-S3 (quad) | RP2040 (Pico) |
 |---|---|---|---|---|
@@ -191,10 +193,10 @@ All commands run in `gateware/`:
 | Command | What it does | Time |
 |---|---|---|
 | `make test` | everything below except `make bitstream`: `sim`, `golden` and `examples` | sum of those |
-| `make sim` | unit testbenches + full-chip self-test over SPI at 10.8 and ~42 MHz and quad SPI at ~42 MHz | ~20 s |
+| `make sim` | unit testbenches, video output checked pixel by pixel (HDMI and LCD), full-chip self-test over SPI and quad SPI, with the real SDRAM start-up time and as an LCD build | ~4 min |
 | `make golden` | renders test scenes in software and in the RTL and compares all 76,800 pixels of each (see [architecture.md](architecture.md#exactness-against-tinygpu)). Needs TinyGPU next to this library, or `TINYGPU_DIR=/path/to/TinyGPU`. The TinyMaterialDesign and video scenes run only if those libraries are found (`TINYMD_DIR`, `TINYH264_DIR`) | ~1 min for the TinyGPU scene; ~45 min with both optional scenes (mostly the TinyMaterialDesign readbacks) |
 | `make examples` | compiles every example with arduino-cli for ESP32, ESP32-S3 and RP2040 (and the quad variants); skipped without arduino-cli | several minutes |
-| `make bitstream` | yosys → `tools/fix_bram_oce.py` → nextpnr → gowin_pack, writes `build/top_tangnano20k.fs`. `LINK=spi` builds a single-line-only bitstream in `build/spi/` | ~10–25 min |
+| `make bitstream` | yosys → `tools/fix_bram_oce.py` → nextpnr → gowin_pack, writes `build/top_tangnano20k.fs`. `VIDEO=lcd` builds the RGB-panel variant in `build/lcd/`, `LINK=spi` a single-line-only one (see [building.md](building.md#build-options)) | ~10–25 min |
 | `make load` | loads the bitstream into SRAM (lost at power-off) | |
 | `make flash` | writes it to the onboard flash | |
 
@@ -209,5 +211,5 @@ Run `make test` after every change; every line must print `PASS` (or `SKIP` for 
 | `UnboundLocalError: cannot access local variable 'offx'` in `gowin_pack` | Apicula 0.33. Use ≥ 0.34 (see above). |
 | `no BELs remaining to implement cell type 'SDPX9'` (or `DPX9`) | yosys 0.33 maps inferred dual-port RAMs to cells nextpnr 0.11 cannot place. The design avoids this by instantiating `SDPB` in `rtl/bram_sdp.v`; use that wrapper for any new dual-port memory. |
 | Block RAM reads return garbage on hardware | yosys 0.33 ties the BSRAM output enable low. The Makefile runs `tools/fix_bram_oce.py` on the netlist; keep it in custom flows. |
-| `ERROR: Unconstrained IO: ...` | A top-level port has no `IO_LOC` in `constraints/tangnano20k.cst`, or an `O_sdram_*`/`IO_sdram_dq` port was renamed (those are placed by name). |
+| `ERROR: Unconstrained IO: ...` | A top-level port has no `IO_LOC` in the `constraints/*.cst` files used for that build, or an `O_sdram_*`/`IO_sdram_dq` port was renamed (those are placed by name). |
 | `Command syntax error: Unknown option` at `synth_gowin ... -family gw2a` | yosys 0.33's `synth_gowin` has no `-family` option (newer versions do); the Makefile doesn't use it. |

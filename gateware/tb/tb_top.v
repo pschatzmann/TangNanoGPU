@@ -44,7 +44,11 @@ module tb_top;
 `endif
   top_tangnano20k #(.SIM_INIT_US(`TB_INIT_US)) dut (
       .clk27(clk), .btn_s1(btn_s1), .btn_s2(btn_s2), .led_n(led_n),
+`ifdef DISPLAY_LCD
+      .lcd_clk(), .lcd_hsync(), .lcd_vsync(), .lcd_de(), .lcd_r(), .lcd_g(), .lcd_b(), .lcd_bl(),
+`else
       .tmds_clk_p(tcp), .tmds_clk_n(tcn), .tmds_d_p(tdp), .tmds_d_n(tdn),
+`endif
       .spi_sck(sck), .spi_mosi(mosi), .spi_miso(miso), .spi_cs_n(cs_n),
       .spi_io2(io2), .spi_io3(io3),
       .gpu_busy(busy),

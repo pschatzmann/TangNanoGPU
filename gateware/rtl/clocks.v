@@ -6,8 +6,11 @@
 //   pll_sys : 27 * 12 / 5 = 64.8MHz system clock (gowin_pll -i 27 -o 64.8
 //             -d GW2AR-LV18QN88C8/I7), plus the same clock shifted by
 //             180 degrees on CLKOUTP for the SDRAM chip's clock pin.
-//   pll_dvi : 27 * 14 / 3 = 126MHz = 5x pixel clock (same settings as
+//   pll_dvi : (HDMI builds) 27 * 14 / 3 = 126MHz = 5x pixel clock (same settings as
 //             Apicula's examples/DVI/pll480.v), CLKDIV /5 -> 25.2MHz.
+//
+//   pll_lcd : (DISPLAY_LCD builds) 27 * 1 / 3 = 9MHz pixel clock for a
+//             480x272 RGB panel
 //
 // The rPLL divider fields are selectors (IDIV_SEL = divider - 1, etc.), so
 // values come from Apicula's gowin_pll calculator, not hand-derived.
@@ -55,6 +58,33 @@ module clocks (
       .PSDA(4'b0), .DUTYDA(4'b0), .FDLY(4'b0)
   );
 
+`ifdef DISPLAY_LCD
+  // RGB LCD (480x272): 27 * 1 / 3 = 9MHz pixel clock, VCO 576MHz - the
+  // settings of Apicula's examples/pll-nanolcd for the same panel.
+  rPLL #(
+      .FCLKIN("27"),
+      .DYN_IDIV_SEL("false"), .IDIV_SEL(2),
+      .DYN_FBDIV_SEL("false"), .FBDIV_SEL(0),
+      .DYN_ODIV_SEL("false"), .ODIV_SEL(64),
+      .PSDA_SEL("0000"),
+      .DYN_DA_EN("false"),
+      .DUTYDA_SEL("1000"),
+      .CLKOUT_FT_DIR(1'b1), .CLKOUTP_FT_DIR(1'b1),
+      .CLKOUT_DLY_STEP(0), .CLKOUTP_DLY_STEP(0),
+      .CLKFB_SEL("internal"),
+      .CLKOUT_BYPASS("false"), .CLKOUTP_BYPASS("false"), .CLKOUTD_BYPASS("false"),
+      .DYN_SDIV_SEL(2),
+      .CLKOUTD_SRC("CLKOUT"), .CLKOUTD3_SRC("CLKOUT"),
+      .DEVICE("GW2AR-18C")
+  ) u_pll_lcd (
+      .CLKOUT(clk_pix), .CLKOUTP(), .CLKOUTD(), .CLKOUTD3(),
+      .LOCK(pix_locked),
+      .RESET(1'b0), .RESET_P(1'b0), .CLKIN(clk27), .CLKFB(1'b0),
+      .FBDSEL(6'b0), .IDSEL(6'b0), .ODSEL(6'b0),
+      .PSDA(4'b0), .DUTYDA(4'b0), .FDLY(4'b0)
+  );
+  assign clk_pix_x5 = 1'b0;   // no serialiser in LCD builds
+`else
   rPLL #(
       .FCLKIN("27"),
       .DYN_IDIV_SEL("false"), .IDIV_SEL(2),
@@ -81,6 +111,7 @@ module clocks (
   CLKDIV #(.DIV_MODE("5")) u_div5 (
       .HCLKIN(clk_pix_x5), .RESETN(pix_locked), .CALIB(1'b0), .CLKOUT(clk_pix)
   );
+`endif
 `endif
 
 endmodule

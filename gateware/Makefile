@@ -17,9 +17,11 @@
 #   make golden     pixel-exact comparison against TinyGPU (needs cmake/g++)
 #   make examples   compile all examples with arduino-cli
 #   make bitstream  build/top_tangnano20k.fs
+#                   VIDEO=hdmi (default) or lcd (40-pin RGB 480x272 panel;
+#                   no HDMI, MCU link on pins 73-76/71) -> build/lcd/
 #                   LINK=qspi (default): single-line SPI and quad SPI
-#                   LINK=spi: single-line only, frees pins 25/26
-#                   (build/spi/top_tangnano20k.fs)
+#                   LINK=spi: single-line only (frees the IO2/IO3 pins)
+#                   -> build[/lcd]/spi/
 #   make load       load into SRAM (volatile)    make flash   write to flash
 
 TOP        := top_tangnano20k
@@ -34,18 +36,20 @@ PYTHON     ?= python3
 RTL := rtl/top_tangnano20k.v rtl/clocks.v rtl/spi_gpu.v rtl/async_fifo.v rtl/byte_fifo.v \
        rtl/bram_sdp.v rtl/gpu_exec.v rtl/scanout.v rtl/video_timing.v \
        rtl/sdram_ctrl.v rtl/dvi_tx.v rtl/tmds_encoder.v
-LINK  ?= qspi
-ifeq ($(LINK),spi)
-  BUILD   := build/spi
-  DEFINES := -DLINK_SPI_ONLY
-  CSTS    := constraints/tangnano20k.cst
-else ifeq ($(LINK),qspi)
-  BUILD   := build
-  DEFINES :=
-  CSTS    := constraints/tangnano20k.cst constraints/qspi.cst
-else
+VIDEO   ?= hdmi
+LINK    ?= qspi
+ifeq ($(filter $(VIDEO),hdmi lcd),)
+  $(error VIDEO must be hdmi or lcd)
+endif
+ifeq ($(filter $(LINK),spi qspi),)
   $(error LINK must be spi or qspi)
 endif
+
+# build directory per combination; the default (hdmi + qspi) is build/
+BUILD := build$(if $(filter lcd,$(VIDEO)),/lcd)$(if $(filter spi,$(LINK)),/spi)
+DEFINES := $(if $(filter lcd,$(VIDEO)),-DDISPLAY_LCD) $(if $(filter spi,$(LINK)),-DLINK_SPI_ONLY)
+CSTS := constraints/base.cst constraints/$(VIDEO).cst constraints/link_$(VIDEO).cst \
+        $(if $(filter qspi,$(LINK)),constraints/link_$(VIDEO)_quad.cst)
 CST := $(BUILD)/link.cst
 
 .PHONY: all test sim golden examples synth pnr bitstream load flash clean

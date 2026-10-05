@@ -1,0 +1,35 @@
+// Pin constraints for TangNanoGPU on the Sipeed Tang Nano 20K
+// (Gowin GW2AR-LV18QN88C8/I7). See docs/pinout.md.
+//
+// The Makefile concatenates: base.cst + <video>.cst + link_<video>.cst
+// (+ link_<video>_quad.cst for LINK=qspi). VIDEO=hdmi|lcd decides
+// where the MCU link goes, because the RGB LCD connector shares pins with
+// both the HDMI output and the HDMI build's SPI pins.
+//
+// The embedded SDRAM needs no entries here: nextpnr's Gowin backend places
+// the top-level ports O_sdram_* / IO_sdram_dq by name onto the package's
+// internal SDRAM bonding (YosysHQ/nextpnr#1370) - don't rename them.
+
+// 27MHz oscillator
+IO_LOC  "clk27" 4;
+IO_PORT "clk27" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+// S1 = reset (active high), S2 = hold for colour bars (active high)
+IO_LOC  "btn_s1" 88;
+IO_PORT "btn_s1" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC  "btn_s2" 87;
+IO_PORT "btn_s2" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+// Onboard LEDs (active low)
+IO_LOC  "led_n[0]" 15;
+IO_PORT "led_n[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "led_n[1]" 16;
+IO_PORT "led_n[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "led_n[2]" 17;
+IO_PORT "led_n[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "led_n[3]" 18;
+IO_PORT "led_n[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "led_n[4]" 19;
+IO_PORT "led_n[4]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "led_n[5]" 20;
+IO_PORT "led_n[5]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;

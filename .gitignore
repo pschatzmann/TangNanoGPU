@@ -1,3 +1,6 @@
 # gateware build products (the prebuilt bitstream is kept)
 gateware/build/*
 !gateware/build/top_tangnano20k.fs
+!gateware/build/lcd/
+gateware/build/lcd/*
+!gateware/build/lcd/top_tangnano20k.fs

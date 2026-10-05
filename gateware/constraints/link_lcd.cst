@@ -1,0 +1,13 @@
+// MCU link for LCD builds: the RGB LCD connector uses 25-31, so SPI moves
+// to header pins with no other on-board function (arduino-tangnano20k's
+// GPIO0/1/2/11/18).
+IO_LOC  "spi_sck" 73;
+IO_PORT "spi_sck" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+IO_LOC  "spi_mosi" 74;
+IO_PORT "spi_mosi" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+IO_LOC  "spi_miso" 75;
+IO_PORT "spi_miso" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "spi_cs_n" 76;
+IO_PORT "spi_cs_n" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC  "gpu_busy" 71;
+IO_PORT "gpu_busy" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;

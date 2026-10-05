@@ -3,7 +3,16 @@
 All signals are 3.3 V. Programming the FPGA uses the board's own USB-C port
 (onboard BL616 USB-JTAG), not any of these pins.
 
-## Host link
+There are two kinds of bitstream (see [building.md](building.md)):
+
+- **HDMI** (default, `gateware/build/top_tangnano20k.fs`): picture on the
+  HDMI connector, MCU link on pins 27–31.
+- **RGB LCD** (`VIDEO=lcd`, `gateware/build/lcd/top_tangnano20k.fs`):
+  picture on a 4.3" 480×272 panel on the 40-pin RGB connector. That
+  connector shares FPGA pins with the HDMI output and with pins 25–31, so
+  this build has no HDMI and moves the MCU link to pins 73–76/71.
+
+## Host link (HDMI build)
 
 The SPI pins (27–30) are the same as in the sibling
 [TangNanoFaust](https://github.com/pschatzmann/TangNanoFaust) and
@@ -22,8 +31,40 @@ wiring works with all three bitstreams.
 | GND | GND | | |
 
 Pins 25–31 belong to the RGB LCD connector (LCD_HS, LCD_VS, LCD_B7…B3),
-which this design doesn't use. A `LINK=spi` bitstream (see
+which the HDMI build doesn't use. A `LINK=spi` bitstream (see
 [building.md](building.md)) has no IO2/IO3 and leaves 25/26 free.
+
+## Host link (LCD build)
+
+| Tang Nano 20K pin | Signal | Notes |
+|---|---|---|
+| 73 | `spi_sck` | weak pull-down |
+| 74 | `spi_mosi` (IO0) | weak pull-down |
+| 75 | `spi_miso` (IO1) | |
+| 76 | `spi_cs_n` | weak pull-up |
+| 71 | `gpu_busy` | |
+| 72 | `spi_io2` (quad only) | weak pull-up |
+| 86 | `spi_io3` (quad only) | weak pull-up |
+
+These are header pins with no other on-board function. The MCU side is
+wired exactly as for the HDMI build; only the FPGA pins differ.
+
+## 40-pin RGB LCD connector (LCD build)
+
+Plug a Sipeed 4.3" 480×272 RGB panel into the FPC connector. The
+320×240 framebuffer is shown 1:1, centred, with a black border.
+
+| Signal | FPGA pins |
+|---|---|
+| R[4:0] | 38, 39, 40, 41, 42 |
+| G[5:0] | 32, 33, 34, 35, 36, 37 |
+| B[4:0] | 27, 28, 29, 30, 31 |
+| CLK / DE / HSYNC / VSYNC | 77 / 48 / 25 / 26 |
+| backlight enable | 49 (driven high) |
+
+Pin assignment and panel timing (9 MHz pixel clock; 480 + 8 + 4 + 39
+horizontal, 272 + 8 + 4 + 8 vertical; about 58 Hz) follow Apicula's
+`pll-nanolcd` example for this board and panel.
 
 ### MCU pins used by the examples
 
@@ -42,12 +83,14 @@ IO_MUX pins (as in the table). Other MCU pins work at lower clocks.
 | Pins | Function |
 |---|---|
 | 4 | 27 MHz oscillator |
-| 33/34, 35/36, 37/38, 39/40 | HDMI TMDS clock, D0 (blue), D1 (green), D2 (red), as differential pairs. Same pins as Apicula's Tang Nano 20K constraints |
+| 33/34, 35/36, 37/38, 39/40 | HDMI build: HDMI TMDS clock, D0 (blue), D1 (green), D2 (red), as differential pairs. Same pins as Apicula's Tang Nano 20K constraints. LCD build: part of the RGB data bus |
 | 88 (S1) | reset |
 | 87 (S2) | hold for colour bars |
 | 15–20 | LEDs (active low): 0 heartbeat, 1 SDRAM ready, 2 error, 3 engine busy, 4 SPI active, 5 scanout late |
 | embedded SDRAM | placed by port name (`O_sdram_*`, `IO_sdram_dq`), not in the `.cst` |
 
-To change pins, edit `gateware/constraints/tangnano20k.cst` (and
-`qspi.cst` for IO2/IO3) and rebuild. Avoid 33–40 (HDMI), 15–20 (LEDs) and the
-pins used by on-board peripherals.
+To change pins, edit the files in `gateware/constraints/` and rebuild:
+`base.cst` (clock, buttons, LEDs), `hdmi.cst` / `lcd.cst` (picture
+output), `link_hdmi.cst` / `link_lcd.cst` (SPI and BUSY) and
+`link_*_quad.cst` (IO2/IO3). Avoid 15–20 (LEDs), the pins of the picture
+output you use and the pins used by on-board peripherals.

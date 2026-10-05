@@ -1,0 +1,13 @@
+// MCU link for HDMI builds. Same SPI pins as the sibling TangNanoFaust /
+// TangNanoAI projects (27-30), so one MCU wiring works for all of them.
+// 27-31 are RGB LCD connector pins (LCD_B7..B3), unused in HDMI builds.
+IO_LOC  "spi_sck" 27;
+IO_PORT "spi_sck" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+IO_LOC  "spi_mosi" 28;
+IO_PORT "spi_mosi" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+IO_LOC  "spi_miso" 29;
+IO_PORT "spi_miso" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC  "spi_cs_n" 30;
+IO_PORT "spi_cs_n" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC  "gpu_busy" 31;
+IO_PORT "gpu_busy" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;

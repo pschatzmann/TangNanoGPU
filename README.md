@@ -3,30 +3,31 @@
 [![Arduino Library](https://img.shields.io/badge/Arduino-Library-blue.svg)](https://www.arduino.cc/reference/en/libraries/)
 [![License: Apache](https://img.shields.io/badge/License-Apache-yellow.svg)](https://opensource.org/licenses/Apache-2.0)
 
-TangNanoGPU makes a [**Sipeed Tang Nano 20K**](https://wiki.sipeed.com/hardware/en/tang/tang-nano-20k/nano-20k.html) FPGA board into an HDMI
-graphics card for
-[TinyGPU](https://github.com/pschatzmann/TinyGPU).
+TangNanoGPU makes a [**Sipeed Tang Nano 20K**](https://wiki.sipeed.com/hardware/en/tang/tang-nano-20k/nano-20k.html) FPGA board into a graphics card for
+[TinyGPU](https://github.com/pschatzmann/TinyGPU), with HDMI output or a
+480×272 RGB LCD panel.
 
 <img src="https://wiki.sipeed.com/hardware/zh/tang/tang-nano-20k/assets/nano_20k/tang_nano_20k_3920_top.png" alt="Sipeed Tang Nano 20K" width="300">
 
 
 Your microcontroller (ESP32, RP2040, STM32, …) keeps calling TinyGPU's
-drawing API. The calls go over SPI (or quad SPI) as short commands. The FPGA draws them
-into a framebuffer in its SDRAM and sends the picture to HDMI in the
-background, so the MCU needs no framebuffer of its own and does no pixel
-pushing.
+drawing API. The calls go over SPI (or quad SPI) as short commands. The FPGA
+draws them into a framebuffer in its SDRAM and sends the picture to HDMI
+(or the RGB panel) in the background, so the MCU needs no framebuffer of its
+own and does no pixel pushing.
 
 ```
- ESP32 / RP2040 ──SPI / QSPI──▶ Tang Nano 20K ──HDMI──▶ monitor
- TinyGPU calls                  draws in hardware,       640×480@60
+ ESP32 / RP2040 ──SPI / QSPI──▶ Tang Nano 20K ──HDMI──────────▶ monitor 640×480@60
+ TinyGPU calls                  draws in hardware,  or 40-pin RGB ─▶ 4.3" panel 480×272
                                 8 MB SDRAM framebuffer
 ```
 
 ## Features
 
 - **Display:** 320×240 RGB565 framebuffer shown as 640×480@60 HDMI/DVI,
-  each pixel doubled. There are two framebuffers, so animation is
-  double-buffered and tear-free.
+  each pixel doubled, or, with the LCD bitstream, on a 4.3" 480×272 RGB
+  panel on the 40-pin connector (1:1, centred). There are two
+  framebuffers, so animation is double-buffered and tear-free.
 - **Drawing in hardware:** fills, lines, circles (outline and filled),
   single pixels, sprite and bitmap writes with colour-key transparency,
   text, clipping, scrolling, and readback.
@@ -55,7 +56,9 @@ pushing.
   for write transactions (ESP32 family, ~40 MHz × 4 lines). One bitstream
   accepts both; the sketch picks `TransportSPI` or `TransportQSPI_ESP32`.
 - **Open-source gateware:** Verilog built with yosys, nextpnr-himbaechel and
-  Apicula. A prebuilt bitstream is included.
+  Apicula. Prebuilt bitstreams for HDMI and for the RGB LCD are included;
+  build options select the picture output (`VIDEO=hdmi|lcd`) and the link
+  (`LINK=qspi|spi`).
 
 ## Getting started
 
@@ -69,9 +72,14 @@ troubleshooting, are in [docs/installation.md](docs/installation.md).
    ```
 
    Connect a monitor and hold button **S2**: you should see colour bars.
+   For a 480×272 RGB panel use `gateware/build/lcd/top_tangnano20k.fs`
+   instead (no HDMI; other FPGA pins for the MCU link, see
+   [docs/pinout.md](docs/pinout.md)).
 2. **Wire the MCU** (3.3 V): SCK → pin 27, MOSI → 28, MISO ← 29,
    CS → 30, BUSY ← 31, and GND (the same SPI pins as TangNanoFaust and
-   TangNanoAI). For quad SPI on an ESP32 also IO2 → 25 and IO3 → 26. See
+   TangNanoAI). For quad SPI on an ESP32 also IO2 → 25 and IO3 → 26.
+   **LCD bitstream:** the FPGA side uses pins 73, 74, 75, 76, 71 (and 72/86
+   for quad) instead, because the RGB connector occupies 25–31. See
    [docs/pinout.md](docs/pinout.md).
 3. **Install the libraries:** put this library and
    [TinyGPU](https://github.com/pschatzmann/TinyGPU) in your Arduino
@@ -198,9 +206,10 @@ frame rate.
   bursts, scanout, resources, verification status
 - [docs/protocol.md](docs/protocol.md): the link layer (SPI / quad SPI) and
   the command set
-- [docs/pinout.md](docs/pinout.md): wiring and on-board pins
-- [docs/building.md](docs/building.md): make targets for simulation and
-  building the bitstream (rebuilding needs Apicula ≥ 0.34)
+- [docs/pinout.md](docs/pinout.md): wiring and on-board pins for the HDMI
+  and LCD builds, the 40-pin RGB connector
+- [docs/building.md](docs/building.md): make targets, build options
+  (`VIDEO`, `LINK`), rebuilding the bitstreams (needs Apicula ≥ 0.34)
 
 ## Testing
 
@@ -209,7 +218,7 @@ All checks run from `gateware/`:
 | Command | What it confirms |
 |---|---|
 | `make test` | everything below except the bitstream |
-| `make sim` | unit testbenches and the full-chip self-test over SPI and quad SPI (~20 s) |
+| `make sim` | unit testbenches, video output pixel by pixel (HDMI and LCD), and the full-chip self-test over SPI and quad SPI (~4 min) |
 | `make golden` | the three pixel-exact golden-model scenes (TinyGPU, TinyMaterialDesign, H.264 video; ~1–45 min depending on installed libraries) |
 | `make examples` | every example compiles for ESP32, ESP32-S3 and RP2040, including the quad variants |
 | `make bitstream` | the design builds and meets timing |
@@ -220,18 +229,19 @@ Details: [docs/installation.md](docs/installation.md#build-and-test).
 
 | Area | Status |
 |---|---|
-| RTL simulation | Passes: unit testbenches, a full-chip test over the real pins (SPI at 10.8 and ~42 MHz, quad SPI at ~42 MHz), and the pixel-exact golden-model tests (TinyGPU scene, TinyMaterialDesign, H.264 video) |
+| RTL simulation | Passes: unit testbenches; the video output checked pixel by pixel for HDMI (640×480) and the LCD (480×272); a full-chip test over the real pins (SPI at 10.8 and ~42 MHz, quad SPI at ~42 MHz, real SDRAM start-up time, LCD build); and the pixel-exact golden-model tests (TinyGPU scene, TinyMaterialDesign, H.264 video) |
 | TinyMaterialDesign | A screen with an open dialog renders pixel-identically, both through a protocol emulator and replayed into the RTL (240 readbacks checked) |
-| Toolchain | Synthesises, routes, meets timing (93 MHz / 89 MHz against 64.8 / 25.2 MHz) and packs; 40% of the LUTs, 7 of 46 block RAMs |
+| Toolchain | Both bitstreams synthesise, route, meet timing and pack. HDMI: 88 MHz system / 89 MHz pixel clock (needs 64.8 / 25.2), 43% of the LUTs. LCD: 95 MHz / 150 MHz (needs 64.8 / 9), 40% of the LUTs. 7 of 46 block RAMs each |
 | Video | TinyH264-decoded frames match TinyH264's own RGB565 output pixel for pixel through `YUVFrameWriter`: all 30 frames via the protocol emulator, the first 8 replayed into the RTL. The converter matches for all 16.7 M YUV inputs |
-| Arduino library | All examples compile for ESP32; `ping`, `basic-example`, `sprite-blit`, `material-design` and `video-player` also for RP2040 |
-| Real hardware | **In progress.** On a real Tang Nano 20K the clocks, HDMI timing generator and SDRAM initialisation run, and no error flags are set. HDMI picture, SPI link and drawing are not tested yet; see [docs/architecture.md](docs/architecture.md#verification-status) |
+| Arduino library | All 9 examples compile for ESP32, ESP32-S3 and RP2040 (`make examples`), on the ESP32 family also with quad SPI |
+| Real hardware | **In progress.** On a real Tang Nano 20K (HDMI bitstream) the clocks, HDMI timing generator and SDRAM initialisation run, and no error flags are set. HDMI picture, the LCD build, SPI link and drawing are not tested yet; see [docs/architecture.md](docs/architecture.md#verification-status) |
 
 ## License
 
 Apache-2.0. The SDRAM init and read timing follow nand2mario's Apache-2.0
 controller (via [TangNanoAI](https://github.com/pschatzmann/TangNanoAI)).
-The HDMI output structure follows Apicula's DVI example. The test clips are
+The HDMI output structure follows Apicula's DVI example, the RGB LCD pins
+and timing its `pll-nanolcd` example. The test clips are
 generated from ffmpeg's built-in test sources (`tools/golden/clips`). This
 library does not depend on TinyH264, which is GPL-3.0; sketches that link
 it, such as `video-player`, fall under that license.

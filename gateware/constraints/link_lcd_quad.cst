@@ -1,0 +1,6 @@
+// Quad-SPI IO2/IO3 for LCD builds: free header pins 72 and 86
+// (arduino-tangnano20k's GPIO17/GPIO16, its optional PWM-audio pins).
+IO_LOC  "spi_io2" 72;
+IO_PORT "spi_io2" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC  "spi_io3" 86;
+IO_PORT "spi_io3" IO_TYPE=LVCMOS33 PULL_MODE=UP;

@@ -1,8 +1,12 @@
 `timescale 1ns / 1ps
 `default_nettype none
 //
-// Background framebuffer scanout: 320x240 RGB565 framebuffer in SDRAM ->
-// 640x480@60 video, each source pixel doubled horizontally and vertically.
+// Background framebuffer scanout: the 320x240 RGB565 framebuffer in SDRAM
+// -> a video timing (HDMI 640x480@60, or an RGB LCD panel), shown at an
+// integer scale inside a window of the active area:
+//   HDMI   640x480: SCALE_SHIFT = 1 (each pixel doubled), window at (0, 0)
+//   LCD    480x272: SCALE_SHIFT = 0 (1:1), window centred at (80, 16),
+//                   black border around it
 //
 // Framebuffer layout (docs/architecture.md): one SDRAM row (256 x 32-bit
 // words = 512 pixels) per framebuffer line, so source line t of buffer b is
@@ -13,17 +17,25 @@
 //   pixel side (clk_pix): video_timing, line-buffer read, RGB565->888.
 //   sys side   (clk):     SDRAM burst fetch into the line buffer.
 // Source line t is fetched into line-buffer half t[0] while line t-1 is
-// on screen from the other half (two video lines = ~63us of slack). The
+// on screen from the other half (at least one video line of slack). The
 // pixel side requests line t with a toggle + a line number that stays
 // stable until the next request, so a plain 2-FF toggle synchroniser is a
 // safe crossing.
 //
 // The front buffer is only switched when line 0 is requested (vertical
-// blanking), so SHOW never tears.
+// blanking or the border above the window), so SHOW never tears.
 //
 module scanout #(
+    parameter integer FB_WIDTH = 320,
     parameter integer FB_LINES = 240,
-    parameter integer FB_WORDS = 160
+    parameter integer FB_WORDS = 160,
+    // video timing (defaults: 640x480@60)
+    parameter integer H_ACTIVE = 640, H_FP = 16, H_SYNC = 96, H_BP = 48,
+    parameter integer V_ACTIVE = 480, V_FP = 10, V_SYNC = 2,  V_BP = 33,
+    // framebuffer window inside the active area
+    parameter integer SCALE_SHIFT = 1,
+    parameter integer X0 = 0,
+    parameter integer Y0 = 0
 ) (
     // ---- sys domain ----
     input  wire        clk,
@@ -55,64 +67,85 @@ module scanout #(
     output reg  [7:0]  b
 );
 
+  localparam integer V_TOTAL = V_ACTIVE + V_FP + V_SYNC + V_BP;
+  localparam integer WIN_W   = FB_WIDTH << SCALE_SHIFT;
+  localparam integer WIN_H   = FB_LINES << SCALE_SHIFT;
+  // video line on which line 0 is requested: the line before the window
+  localparam integer REQ0_LINE = (Y0 == 0) ? V_TOTAL - 1 : Y0 - 1;
+
   // ===================== pixel side =====================
   wire [9:0] hc, vc;
   wire       de0, hs0, vs0;
 
-  video_timing u_timing (
+  video_timing #(
+      .H_ACTIVE(H_ACTIVE), .H_FP(H_FP), .H_SYNC(H_SYNC), .H_BP(H_BP),
+      .V_ACTIVE(V_ACTIVE), .V_FP(V_FP), .V_SYNC(V_SYNC), .V_BP(V_BP)
+  ) u_timing (
       .clk(clk_pix), .rst(rst_pix),
       .hc(hc), .vc(vc), .de(de0), .hsync_n(hs0), .vsync_n(vs0)
   );
 
-  // Line requests: at the start of video line vc (hc == 0)
-  //   vc even, vc < 480: line vc/2 is starting -> prefetch line vc/2 + 1
-  //   vc == 524 (last blank line): prefetch line 0 for the next frame
+  // position inside the framebuffer window (fx/fy only valid inside it)
+  wire        in_x  = (hc >= X0) && (hc < X0 + WIN_W);
+  wire        in_y  = (vc >= Y0) && (vc < Y0 + WIN_H);
+  wire [9:0]  wx    = hc - X0[9:0];
+  wire [9:0]  wy    = vc - Y0[9:0];
+  wire [9:0]  fx    = wx >> SCALE_SHIFT;
+  wire [9:0]  fy    = wy >> SCALE_SHIFT;
+  // first video line of source line fy
+  wire        first_of_line = (SCALE_SHIFT == 0) ? 1'b1 : (wy[0] == 1'b0);
+
+  // Line requests, at the start of video line vc (hc == 0):
+  //   line REQ0_LINE (just before the window): prefetch line 0
+  //   first video line of source line fy:      prefetch line fy + 1
   reg       req_tog_pix = 1'b0;
   reg [7:0] req_line_pix = 8'd0;
-  wire [8:0] next_line = {1'b0, vc[9:1]} + 9'd1;
+  wire [9:0] next_line = fy + 10'd1;
 
   always @(posedge clk_pix) begin
     if (rst_pix) begin
       req_tog_pix  <= 1'b0;
       req_line_pix <= 8'd0;
     end else if (hc == 10'd0) begin
-      if (vc == 10'd524) begin
+      if (vc == REQ0_LINE) begin
         req_line_pix <= 8'd0;
         req_tog_pix  <= ~req_tog_pix;
-      end else if (vc < 10'd480 && !vc[0] && next_line < FB_LINES) begin
+      end else if (in_y && first_of_line && next_line < FB_LINES) begin
         req_line_pix <= next_line[7:0];
         req_tog_pix  <= ~req_tog_pix;
       end
     end
   end
 
-  // Line buffer read: half = source line's lsb = vc[1], word = hc / 4.
+  // Line buffer read: half = source line's lsb, word = fx / 2.
   wire [31:0] lb_rdata;
-  wire [8:0]  lb_raddr = {vc[1], hc[9:2]};
+  wire [8:0]  lb_raddr = {fy[0], fx[8:1]};
 
   // Pipeline stage 1 (BRAM output valid)
-  reg       de1, hs1, vs1, sel1;
+  reg       de1, hs1, vs1, sel1, win1;
   reg [9:0] hc1;
   always @(posedge clk_pix) begin
     de1  <= de0;
     hs1  <= hs0;
     vs1  <= vs0;
-    sel1 <= hc[1];
+    sel1 <= fx[0];
+    win1 <= in_x && in_y;
     hc1  <= hc;
   end
 
   wire [15:0] px565 = sel1 ? lb_rdata[31:16] : lb_rdata[15:0];
 
-  // Colour bars (white, yellow, cyan, green, magenta, red, blue, black)
-  wire [2:0] bar_idx = (hc1 < 10'd80)  ? 3'd0 : (hc1 < 10'd160) ? 3'd1 :
-                       (hc1 < 10'd240) ? 3'd2 : (hc1 < 10'd320) ? 3'd3 :
-                       (hc1 < 10'd400) ? 3'd4 : (hc1 < 10'd480) ? 3'd5 :
-                       (hc1 < 10'd560) ? 3'd6 : 3'd7;
+  // Colour bars across the whole active width (white, yellow, cyan, green,
+  // magenta, red, blue, black)
+  wire [2:0] bar_idx = (hc1 < H_ACTIVE * 1 / 8) ? 3'd0 : (hc1 < H_ACTIVE * 2 / 8) ? 3'd1 :
+                       (hc1 < H_ACTIVE * 3 / 8) ? 3'd2 : (hc1 < H_ACTIVE * 4 / 8) ? 3'd3 :
+                       (hc1 < H_ACTIVE * 5 / 8) ? 3'd4 : (hc1 < H_ACTIVE * 6 / 8) ? 3'd5 :
+                       (hc1 < H_ACTIVE * 7 / 8) ? 3'd6 : 3'd7;
   wire bar_r = (bar_idx == 3'd0) | (bar_idx == 3'd1) | (bar_idx == 3'd4) | (bar_idx == 3'd5);
   wire bar_g = (bar_idx == 3'd0) | (bar_idx == 3'd1) | (bar_idx == 3'd2) | (bar_idx == 3'd3);
   wire bar_b = (bar_idx == 3'd0) | (bar_idx == 3'd2) | (bar_idx == 3'd4) | (bar_idx == 3'd6);
 
-  // Pipeline stage 2: registered RGB888 + syncs
+  // Pipeline stage 2: registered RGB888 + syncs (black outside the window)
   always @(posedge clk_pix) begin
     de      <= de1;
     hsync_n <= hs1;
@@ -121,6 +154,8 @@ module scanout #(
       r <= 8'd0; g <= 8'd0; b <= 8'd0;
     end else if (test_pattern) begin
       r <= {8{bar_r}}; g <= {8{bar_g}}; b <= {8{bar_b}};
+    end else if (!win1) begin
+      r <= 8'd0; g <= 8'd0; b <= 8'd0;
     end else begin
       r <= {px565[15:11], px565[15:13]};
       g <= {px565[10:5],  px565[10:9]};
