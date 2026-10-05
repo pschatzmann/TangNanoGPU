@@ -29,6 +29,16 @@ constexpr uint8_t kMask = 0x40;
 constexpr uint8_t kReadRect = 0x50;
 }  // namespace op
 
+/// Gateware version this library expects (PING) and its capability bits.
+constexpr uint8_t kGatewareVersion = 2;
+namespace cap {
+constexpr uint8_t kQuad = 0x01;  ///< quad-SPI write transactions supported
+}  // namespace cap
+
+/// Bit 7 of the address byte: the rest of this transaction is quad SPI
+/// (IO3..IO0, high nibble first). Board addresses are 0..127.
+constexpr uint8_t kQuadFlag = 0x80;
+
 /// Framebuffer geometry (fixed by the gateware).
 constexpr int kWidth = 320;
 constexpr int kHeight = 240;

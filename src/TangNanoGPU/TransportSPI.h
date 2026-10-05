@@ -10,13 +10,14 @@ namespace tangnanogpu {
  * @brief SPI transport (Arduino SPIClass) with chip select and an optional
  * BUSY input.
  *
- * Wiring (see docs/pinout.md): SCK -> FPGA pin 73, MOSI -> 74,
- * MISO <- 75, CS -> 76, BUSY <- 71 (all 3.3V).
+ * Wiring (see docs/pinout.md): SCK -> FPGA pin 27, MOSI -> 28,
+ * MISO <- 29, CS -> 30, BUSY <- 31 (all 3.3V) - the same SPI pins as
+ * TangNanoFaust / TangNanoAI.
  *
- * Writes run at `writeHz` (default 10MHz, max ~16MHz: the FPGA oversamples SCK with its
- * 64.8MHz system clock); transactions that read MISO run at `readHz`
- * (default 4MHz), because MISO is updated a few system clocks after SCK
- * falls.
+ * Writes run at `writeHz` (default 32MHz; the FPGA receives with SCK as its
+ * clock, tested in simulation at ~42MHz - long jumper wires may need less).
+ * Transactions that read MISO run at `readHz` (default 4MHz), because the
+ * response byte is prepared in the FPGA's system clock domain.
  *
  * With a BUSY pin, write() sends in chunks of kChunk bytes and waits while
  * BUSY is high before each chunk, so one transaction can carry a payload of
@@ -28,7 +29,7 @@ class TransportSPI : public ITransport {
   static constexpr size_t kChunk = 256;
 
   TransportSPI(SPIClass& spi, int csPin, int busyPin = -1,
-               uint32_t writeHz = 10000000, uint32_t readHz = 4000000)
+               uint32_t writeHz = 32000000, uint32_t readHz = 4000000)
       : spi_(spi), cs_(csPin), busy_(busyPin), writeHz_(writeHz), readHz_(readHz) {}
 
   bool begin() override {

@@ -17,15 +17,28 @@
 
 #include "clip.h"
 
+// Interface: plain SPI (any MCU) or quad SPI (ESP32 family, IO2/IO3 wired
+// to FPGA pins 25/26) - uncomment to select quad:
+// #define TANGNANOGPU_LINK_QSPI
+
+#if defined(TANGNANOGPU_LINK_QSPI) && defined(ESP32)
+#if CONFIG_IDF_TARGET_ESP32
+// VSPI IO_MUX pins: SCK 18, IO0/MOSI 23, IO1/MISO 19, IO2 22, IO3 21, CS 5, BUSY 4
+TransportQSPI_ESP32 transport(18, 23, 19, 22, 21, 5, 4);
+#else
+// SCK 12, IO0 11, IO1 13, IO2 14, IO3 9, CS 10, BUSY 8
+TransportQSPI_ESP32 transport(12, 11, 13, 14, 9, 10, 8);
+#endif
+#else
 #if defined(ESP32)
-const int kCsPin = 5, kBusyPin = 4;
+const int kCsPin = 5, kBusyPin = 4;     // VSPI: SCK 18, MISO 19, MOSI 23
 #elif defined(ARDUINO_ARCH_RP2040)
-const int kCsPin = 17, kBusyPin = 20;
+const int kCsPin = 17, kBusyPin = 20;   // SPI0: SCK 18, MOSI 19, MISO 16
 #else
 const int kCsPin = 10, kBusyPin = 9;
 #endif
-
-TransportSPI transport(SPI, kCsPin, kBusyPin, 16000000);
+TransportSPI transport(SPI, kCsPin, kBusyPin);
+#endif
 TangNanoGPU gpu(transport);
 SurfaceTangNano screen(gpu);
 YUVFrameWriter video(gpu);

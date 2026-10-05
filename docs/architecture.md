@@ -3,15 +3,15 @@
 The library turns a Tang Nano 20K into a TinyGPU "graphics card".
 
 - **The microcontroller** runs TinyGPU and sends short drawing commands over
-  SPI.
+  SPI or quad SPI.
 - **The FPGA** keeps the framebuffer in its 8 MB SDRAM and draws the
   commands in hardware. It also streams the picture to HDMI continuously,
   with no help from the MCU.
 
 ```
  MCU (TinyGPU calls)
-   │ SPI (≤16 MHz)   ▲ BUSY / MISO
-   ▼                 │
+   │ SPI / quad SPI (~40 MHz)   ▲ BUSY / MISO (4 MHz reads)
+   ▼                            │
  spi_gpu ──► cmd FIFO (4 KB) ──► gpu_exec ──────────────┐ port B (read/write)
    ▲                                │ span buffer, read  │
    └──── resp FIFO (2 KB) ◄─────────┘ buffer, YUV→RGB    ▼
@@ -24,7 +24,8 @@ The library turns a Tang Nano 20K into a TinyGPU "graphics card".
 
 | Clock | Frequency | Source | Used by |
 |---|---|---|---|
-| `clk` | 64.8 MHz | rPLL #1 (27 × 12 / 5) | SPI slave, FIFOs, drawing engine, SDRAM controller, scanout fetch |
+| `spi_sck` | host's SPI clock (≤ ~40 MHz) | MCU | SPI/quad receive shift register and the write side of the receive FIFO |
+| `clk` | 64.8 MHz | rPLL #1 (27 × 12 / 5) | SPI byte parser, FIFOs, drawing engine, SDRAM controller, scanout fetch |
 | `clk_sdram` | 64.8 MHz, shifted 180° | rPLL #1 CLKOUTP | SDRAM chip clock |
 | `clk_pix_x5` | 126 MHz | rPLL #2 (27 × 14 / 3) | OSER10 serialisers (DDR, giving 252 Mbit/s per TMDS lane) |
 | `clk_pix` | 25.2 MHz | CLKDIV ÷5 | video timing, TMDS encoders, line-buffer read |
@@ -32,6 +33,27 @@ The library turns a Tang Nano 20K into a TinyGPU "graphics card".
 The PLL settings come from Apicula's `gowin_pll` calculator and its DVI
 example. They are not hand-derived. Packing two PLLs needs Apicula 0.34 or
 newer (see [building.md](building.md)).
+
+## Host link (`spi_gpu.v`, `async_fifo.v`)
+
+SCK itself clocks the receive shift register; there is no oversampling.
+Each completed byte goes, tagged with a "first byte of the transaction"
+flag, into a 16-entry asynchronous FIFO (Gray-coded pointers, 2-flop
+synchronisers) and is parsed in the 64.8 MHz domain. The flag frames
+transactions, so a CS that rises right after the last byte cannot overtake
+it. This raises the write clock from about 16 MHz (oversampling) to about
+40 MHz.
+
+- **Quad SPI:** when the address byte's bit 7 is set, the rest of the
+  transaction arrives on IO3..IO0, four bits per clock. One bitstream
+  serves both interfaces, chosen per transaction by the host.
+- **Reads:** the response byte is chosen in the system domain after the
+  previous byte arrived, and loaded into the SCK-domain MISO register at
+  the next byte boundary. That needs a slow read clock (4 MHz).
+- **Power-up:** the SCK-domain registers and the FIFO's write pointer have
+  explicit initial values. They are otherwise only reset by a rising CS
+  edge, and at power-up CS is already high.
+- **Build option:** `LINK=spi` leaves out IO2/IO3 and the quad receiver.
 
 ## SDRAM: row bursts
 
@@ -116,10 +138,11 @@ the command takes to arrive over a 16 MHz SPI link:
 | scroll the whole screen | 2.6 ms |
 | 24×24 colour-keyed blit from SDRAM | 39 µs |
 
-The SPI link is the slow part for pixel data. At 10 MHz a full-screen
-`WRITE_RECT` (153.6 KB) takes about 125 ms, and about 77 ms at 16 MHz.
-Sprites and images that are reused should therefore be uploaded once and
-drawn with `blit()`.
+The host link is the slow part for pixel data. A full-screen `WRITE_RECT`
+(153.6 KB) takes about 38 ms over SPI at 32 MHz and about 8 ms over quad
+SPI at 40 MHz (bus time, without the MCU's per-transaction overhead).
+Sprites and images that are reused should still be uploaded once and drawn
+with `blit()`.
 
 ## Video macroblocks (`YUV_MBS`)
 
@@ -171,16 +194,23 @@ SDRAM model. All 76,800 pixels must match:
 
 | Resource | Used | Available |
 |---|---|---|
-| LUT4 | 8,685 (41%) | 20,736 |
-| DFF | 1,952 (12%) | 15,552 |
+| LUT4 | 8,458 (40%) | 20,736 |
+| DFF | 2,012 (12%) | 15,552 |
 | BSRAM | 7 (15%) | 46 |
-| RAM16SDP4 (LUT RAM) | 48 (7%) | 648 |
+| RAM16SDP4 (LUT RAM) | 51 (7%) | 648 |
 | rPLL | 2 (100%) | 2 |
 
 | Clock | Required | Fmax after routing |
 |---|---|---|
-| `clk` | 64.8 MHz | 82.0 MHz |
-| `clk_pix` | 25.2 MHz | 83.6 MHz |
+| `clk` | 64.8 MHz | 83.6 MHz |
+| `clk_pix` | 25.2 MHz | 82.7 MHz |
+| `spi_sck` | ~40 MHz | 354 MHz (register to register) |
+
+The `spi_sck` figure covers only paths inside the FPGA. At 40 MHz the real
+limit is the board-level timing: MOSI/IO setup against SCK through jumper
+wires, and SCK reaching the receive registers over general routing rather
+than a global clock net. That's why the library defaults are 32 MHz (SPI)
+and 40 MHz (quad), and why they are easy to lower.
 
 The 7 BSRAM blocks are: line buffer 1, command FIFO 2, response FIFO 1,
 span buffer 2, read buffer 1.
@@ -206,11 +236,12 @@ span buffer 2, read buffer 1.
 - Video timing: exact 640×480@60 counts.
 - SDRAM controller: against a protocol-checking SDRAM model, covering full
   row bursts, byte masks, port contention and refresh.
-- Full chip over its SPI pins: PING, STATUS, READ_RECT readback, RESET and
-  bad-opcode recovery. These pass at 10.8 MHz and at 16.2 MHz SCK, with
-  4 MHz reads.
+- Full chip over its pins: PING, STATUS, READ_RECT readback, RESET and
+  bad-opcode recovery, over SPI at 10.8 MHz and ~42 MHz and over quad SPI
+  at ~42 MHz, with 4 MHz reads.
 - The three golden-model scenes above (TinyGPU, TinyMaterialDesign, H.264
-  video), each pixel-identical to its reference.
+  video), replayed over quad SPI at ~42 MHz, each pixel-identical to its
+  reference.
 
 **Verified with the real toolchain:** the design synthesises, places,
 routes, meets timing and packs into a bitstream.
@@ -220,7 +251,9 @@ written. Bring-up order:
 
 1. Hold S2 and look for colour bars. This checks HDMI, the PLLs and the
    OSER10/TLVDS output.
-2. Run `examples/ping`. This checks the SPI wiring and SDRAM init.
+2. Run `examples/ping`. This checks the SPI wiring and SDRAM init, and
+   reports whether the bitstream supports quad SPI. Then try it with
+   `TANGNANOGPU_LINK_QSPI` and `examples/link-benchmark`.
 3. Run `examples/basic-example`.
 4. Optionally run `examples/material-design` and `examples/video-player`.
 

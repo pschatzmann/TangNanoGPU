@@ -98,10 +98,10 @@ The `touch` object can be any of these:
 
 ## Performance
 
-| Situation | SPI traffic per redraw | Time at 10 MHz |
+| Situation | SPI traffic per redraw | Time (SPI writes at 32 MHz, reads at 4 MHz) |
 |---|---|---|
-| Typical screen (app bar, labels, switch, checkbox, slider, progress bars, button) | about 20 KB of commands | about 20–40 ms (25–50 redraws/s) |
-| Same screen with a `Dialog` presented | plus about 154 KB read back and 157 KB written | about 0.5 s |
+| Typical screen (app bar, labels, switch, checkbox, slider, progress bars, button) | about 20 KB in about 1,100 small commands | about 10–25 ms, mostly per-command overhead on the MCU |
+| Same screen with a `Dialog` presented | plus about 154 KB read back and 157 KB written | about 0.4 s, mostly the 4 MHz readback |
 
 Most of a normal frame is TinyGPU's `fillRoundRect`. Its default
 implementation issues one `fillRect` per row, so each rounded widget costs a
@@ -123,7 +123,7 @@ so `SurfaceTangNano` takes two steps to make it workable:
   (2 bytes per pixel) instead of individual 6-byte pixel records.
 
 That makes a scrim cost one readback per row, 240 in total, which is about
-half a second per redraw while a modal is open. Dialogs therefore work
+0.4 seconds per redraw while a modal is open (reads run at 4 MHz). Dialogs therefore work
 correctly but react slowly. Keep redraws rare while a modal is shown: avoid
 indeterminate progress indicators and other animations behind it.
 

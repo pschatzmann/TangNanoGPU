@@ -28,7 +28,10 @@ module tb_top;
   wire tcp, tcn;
   wire [2:0] tdp, tdn;
   reg  sck = 0, mosi = 0, cs_n = 1;
+  reg  io2 = 1'b1, io3 = 1'b1;          // IO2/IO3 (quad), idle high like the pull-ups
+  reg  io1_drv = 1'b0, io1_en = 1'b0;   // master drives IO1 only during quad data
   wire miso, busy;
+  assign miso = io1_en ? io1_drv : 1'bz;
 
   wire [31:0] DQ;
   wire [10:0] A;
@@ -40,6 +43,7 @@ module tb_top;
       .clk27(clk), .btn_s1(btn_s1), .btn_s2(btn_s2), .led_n(led_n),
       .tmds_clk_p(tcp), .tmds_clk_n(tcn), .tmds_d_p(tdp), .tmds_d_n(tdn),
       .spi_sck(sck), .spi_mosi(mosi), .spi_miso(miso), .spi_cs_n(cs_n),
+      .spi_io2(io2), .spi_io3(io3),
       .gpu_busy(busy),
       .IO_sdram_dq(DQ), .O_sdram_addr(A), .O_sdram_ba(BA), .O_sdram_cs_n(nCS),
       .O_sdram_wen_n(nWE), .O_sdram_ras_n(nRAS), .O_sdram_cas_n(nCAS),
@@ -53,38 +57,74 @@ module tb_top;
   );
 
   // ---------------- SPI master ----------------
-  // SCK half period in system clocks (+sckhalf=<n>, default 3 = ~10.8MHz;
-  // 2 = ~16.2MHz, the fastest write clock the oversampling slave supports)
+  // Write clock: +sckns=<half period in ns> or +sckhalf=<system clocks>
+  // (default 3 system clocks = ~10.8MHz). +quad sends every write
+  // transaction as quad SPI: the address byte single-line with bit 7 set,
+  // the rest on IO3..IO0. Reads always use single-line SPI at the read
+  // clock (+readns / +readhalf, default 4x the write half period).
   real HALF = 7.716 * 2 * 3;
-  integer sck_half_cycles;
-  // read transactions: +readhalf=<n> system clocks per half period
-  // (default 4x the write half period)
   real RHALF = 7.716 * 2 * 12;
-  integer read_half_cycles;
+  integer sck_half_cycles, read_half_cycles, sck_ns, read_ns;
+  reg quad_mode = 1'b0;
   initial begin
     if ($value$plusargs("sckhalf=%d", sck_half_cycles)) begin
       HALF = 7.716 * 2 * sck_half_cycles;
       RHALF = HALF * 4;
     end
+    if ($value$plusargs("sckns=%d", sck_ns)) begin
+      HALF = sck_ns;
+      RHALF = 125.0;                 // 4MHz reads
+    end
     if ($value$plusargs("readhalf=%d", read_half_cycles)) RHALF = 7.716 * 2 * read_half_cycles;
+    if ($value$plusargs("readns=%d", read_ns)) RHALF = read_ns;
+    if ($test$plusargs("quad")) quad_mode = 1'b1;
   end
 
+  integer byte_idx = 0;    // bytes sent in this transaction
+  reg     txn_quad = 1'b0; // this transaction continues in quad mode
+
   reg [7:0] rx;
-  task spi_byte(input [7:0] tx);
-    integer b;
+  task spi_bit(input b0);
     begin
-      for (b = 7; b >= 0; b = b - 1) begin
-        mosi = tx[b];
-        #(HALF);
-        sck = 1;
-        rx[b] = miso;
-        #(HALF);
-        sck = 0;
-      end
+      mosi = b0;
+      #(HALF);
+      sck = 1;
+      #(HALF);
+      sck = 0;
     end
   endtask
 
-  // slower clock for transactions that read MISO
+  task spi_byte(input [7:0] tx_in);
+    integer b;
+    reg [7:0] tx;
+    begin
+      tx = tx_in;
+      if (byte_idx == 0 && quad_mode) begin
+        tx[7]    = 1'b1;           // quad flag in the address byte
+        txn_quad = 1'b1;
+      end
+      if (txn_quad && byte_idx > 0) begin
+        // two nibbles, high first, on IO3..IO0
+        io1_en = 1'b1;
+        {io3, io2, io1_drv, mosi} = tx[7:4];
+        #(HALF); sck = 1; #(HALF); sck = 0;
+        {io3, io2, io1_drv, mosi} = tx[3:0];
+        #(HALF); sck = 1; #(HALF); sck = 0;
+      end else begin
+        for (b = 7; b >= 0; b = b - 1) begin
+          mosi = tx[b];
+          #(HALF);
+          sck = 1;
+          rx[b] = miso;
+          #(HALF);
+          sck = 0;
+        end
+      end
+      byte_idx = byte_idx + 1;
+    end
+  endtask
+
+  // slower, always single-line clock for transactions that read MISO
   task spi_byte_slow(input [7:0] tx);
     integer b;
     begin
@@ -96,11 +136,24 @@ module tb_top;
         #(RHALF);
         sck = 0;
       end
+      byte_idx = byte_idx + 1;
     end
   endtask
 
-  task cs_begin; begin #(HALF); cs_n = 0; #(HALF); end endtask
-  task cs_end;   begin #(HALF); cs_n = 1; #(HALF * 4); end endtask
+  task cs_begin;
+    begin
+      #(HALF); cs_n = 0; #(HALF);
+      byte_idx = 0;
+      txn_quad = 1'b0;
+    end
+  endtask
+  task cs_end;
+    begin
+      #(HALF); cs_n = 1;
+      io1_en = 1'b0; io2 = 1'b1; io3 = 1'b1;
+      #(HALF * 4);
+    end
+  endtask
 
   task wait_not_busy;
     integer t;
@@ -241,9 +294,11 @@ module tb_top;
     integer k;
     begin
       // PING
-      read_txn(8'h01, 5);
-      if (resp[0] != "T" || resp[1] != "A" || resp[2] != "N" || resp[3] != "G" || resp[4] != 8'h01) begin
-        $display("FAIL ping: %h %h %h %h %h", resp[0], resp[1], resp[2], resp[3], resp[4]);
+      read_txn(8'h01, 6);
+      if (resp[0] != "T" || resp[1] != "A" || resp[2] != "N" || resp[3] != "G" || resp[4] != 8'h02 ||
+          resp[5] != 8'h01) begin
+        $display("FAIL ping: %h %h %h %h version %h caps %h", resp[0], resp[1], resp[2], resp[3],
+                 resp[4], resp[5]);
         errors = errors + 1;
       end
       // wrong address must be ignored (MISO tri-stated -> reads as z/x, engine untouched)

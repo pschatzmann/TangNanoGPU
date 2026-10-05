@@ -11,6 +11,7 @@ namespace tangnanogpu {
  *
  * One transaction = one chip-select period. Implementations:
  * - TransportSPI (Arduino SPIClass + chip select + BUSY pin)
+ * - TransportQSPI_ESP32 (ESP-IDF spi_master, quad-SPI writes, ESP32 family)
  * - TransportRecorder (desktop / tests: records every transaction)
  */
 class ITransport {
@@ -32,6 +33,11 @@ class ITransport {
   /// True if the transport can see the BUSY pin, so payloads of any length
   /// are safe in one transaction.
   virtual bool hasBusyPin() const = 0;
+
+  /// True if write transactions use quad SPI (the transport sets the
+  /// address byte's kQuadFlag itself); TangNanoGPU::begin() then checks
+  /// that the bitstream supports it.
+  virtual bool isQuad() const { return false; }
 
   /// Time helpers (millis-style), used for timeouts.
   virtual uint32_t millis() = 0;

@@ -64,18 +64,31 @@ On Linux, if openFPGALoader reports `unable to open ftdi device`, install its ud
 
 ### 4. Wire the microcontroller
 
-All signals are 3.3 V. Connect GND first.
+All signals are 3.3 V. Connect GND first. The SPI pins are the same as for
+the TangNanoFaust and TangNanoAI bitstreams.
 
-| Tang Nano 20K pin | Signal | ESP32 | RP2040 (Pico) |
-|---|---|---|---|
-| 73 | SCK | GPIO 18 | GP18 |
-| 74 | MOSI | GPIO 23 | GP19 |
-| 75 | MISO | GPIO 19 | GP16 |
-| 76 | CS | GPIO 5 | GP17 |
-| 71 | BUSY | GPIO 4 | GP20 |
-| GND | GND | GND | GND |
+| Tang Nano 20K pin | Signal | ESP32 | ESP32-S3 (quad) | RP2040 (Pico) |
+|---|---|---|---|---|
+| 27 | SCK | GPIO 18 | GPIO 12 | GP18 |
+| 28 | MOSI / IO0 | GPIO 23 | GPIO 11 | GP19 |
+| 29 | MISO / IO1 | GPIO 19 | GPIO 13 | GP16 |
+| 30 | CS | GPIO 5 | GPIO 10 | GP17 |
+| 31 | BUSY | GPIO 4 | GPIO 8 | GP20 |
+| 25 | IO2 (quad only) | GPIO 22 | GPIO 14 | – |
+| 26 | IO3 (quad only) | GPIO 21 | GPIO 9 | – |
+| GND | GND | GND | GND | GND |
 
-BUSY is optional but strongly recommended: without it, the library has to poll the board before sending larger images, which is slower. Other pins are fine; change `kCsPin`/`kBusyPin` in the sketch (and the SPI pins of your core) to match. Full details: [pinout.md](pinout.md).
+Choose the interface in the sketch:
+
+- **SPI** (any MCU, 5 wires + GND): `TransportSPI transport(SPI, cs, busy);`
+- **Quad SPI** (ESP32 family, 7 wires + GND, about 4× faster for pixel
+  data): uncomment `#define TANGNANOGPU_LINK_QSPI` in the examples, or use
+  `TransportQSPI_ESP32 transport(sck, io0, io1, io2, io3, cs, busy);`
+
+The prebuilt bitstream accepts both. BUSY is optional but strongly
+recommended: without it, the library has to poll the board before sending
+larger images, which is slower. Other pins are fine; change them in the
+sketch to match. Full details: [pinout.md](pinout.md).
 
 ### 5. Run the examples
 
@@ -108,7 +121,8 @@ void loop() {}
 |---|---|
 | No picture, even with S2 held | Bitstream not loaded, or the monitor is on the wrong input. Re-run openFPGALoader and check that LED 0 blinks. |
 | Colour bars work, `ping` says "No answer" | Wiring (MISO/SCK swapped, missing GND), wrong CS pin, or the bitstream was loaded into SRAM and the board was power-cycled since. |
-| `ping` works, drawings are corrupted or incomplete | Lower the SPI write clock: `TransportSPI transport(SPI, cs, busy, 4000000);`. Make sure BUSY is wired. |
+| `ping` works, drawings are corrupted or incomplete | Lower the write clock, e.g. `TransportSPI transport(SPI, cs, busy, 10000000);` (default 32 MHz; quad default 40 MHz). Keep the wires short and make sure BUSY is wired. |
+| `gpu.begin()` fails only with quad SPI | The bitstream was built with `LINK=spi` (no IO2/IO3), or IO2/IO3 are not wired. `ping` prints whether quad is supported. |
 | Status shows `ERROR` | A command was lost (FIFO overflow without BUSY) or the stream got out of sync. `gpu.reset()` recovers; then wire BUSY or reduce the clock. |
 | Compile error `'TwoWire' does not name a type` | Include `<TangNanoGPU.h>` rather than `<TinyGPU.h>` first; it pulls in `Wire.h` for TinyGPU. |
 
@@ -175,15 +189,17 @@ All commands run in `gateware/`:
 
 | Command | What it does | Time |
 |---|---|---|
-| `make sim` | unit testbenches + full-chip self-test | ~10 s |
-| `make golden` | renders test scenes in software and in the RTL and compares all 76,800 pixels of each (see [architecture.md](architecture.md#exactness-against-tinygpu)). Needs TinyGPU next to this library, or `TINYGPU_DIR=/path/to/TinyGPU`. The TinyMaterialDesign and video scenes run only if those libraries are found (`TINYMD_DIR`, `TINYH264_DIR`) | GOLDEN_TIME |
-| `make bitstream` | yosys → `tools/fix_bram_oce.py` → nextpnr → gowin_pack, writes `build/top_tangnano20k.fs` | ~8 min |
+| `make test` | everything below except `make bitstream`: `sim`, `golden` and `examples` | sum of those |
+| `make sim` | unit testbenches + full-chip self-test over SPI at 10.8 and ~42 MHz and quad SPI at ~42 MHz | ~20 s |
+| `make golden` | renders test scenes in software and in the RTL and compares all 76,800 pixels of each (see [architecture.md](architecture.md#exactness-against-tinygpu)). Needs TinyGPU next to this library, or `TINYGPU_DIR=/path/to/TinyGPU`. The TinyMaterialDesign and video scenes run only if those libraries are found (`TINYMD_DIR`, `TINYH264_DIR`) | ~1 min for the TinyGPU scene; ~45 min with both optional scenes (mostly the TinyMaterialDesign readbacks) |
+| `make examples` | compiles every example with arduino-cli for ESP32, ESP32-S3 and RP2040 (and the quad variants); skipped without arduino-cli | several minutes |
+| `make bitstream` | yosys → `tools/fix_bram_oce.py` → nextpnr → gowin_pack, writes `build/top_tangnano20k.fs`. `LINK=spi` builds a single-line-only bitstream in `build/spi/` | ~10–25 min |
 | `make load` | loads the bitstream into SRAM (lost at power-off) | |
 | `make flash` | writes it to the onboard flash | |
 
 `make bitstream` ends by printing LUT/BSRAM/PLL use and Fmax. The second (post-route) Fmax figures must stay above **64.8 MHz** for `clk` and **25.2 MHz** for `clk_pix`.
 
-Run `make sim` and `make golden` after every RTL change; both must print `PASS`.
+Run `make test` after every change; every line must print `PASS` (or `SKIP` for an optional library that isn't installed).
 
 ### Known toolchain issues
 

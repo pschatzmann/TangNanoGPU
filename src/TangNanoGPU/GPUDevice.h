@@ -44,6 +44,8 @@ class TangNanoGPU {
       if (io_.millis() - start > timeoutMs) return false;
       io_.delayMicros(1000);
     }
+    // a quad transport needs a quad-capable bitstream (see docs/protocol.md)
+    if (io_.isQuad() && !(caps_ & cap::kQuad)) return false;
     reset();
     while (!status().sdramReady()) {
       if (io_.millis() - start > timeoutMs) return false;
@@ -58,20 +60,27 @@ class TangNanoGPU {
   // Immediate commands
   // ------------------------------------------------------------------
 
-  /// PING: true if the board answered "TANG"; version() then returns its
-  /// gateware version.
+  /// PING: true if the board answered "TANG"; version() and capabilities()
+  /// then describe the gateware.
   bool ping() {
     uint8_t cmd[2] = {addr_, op::kPing};
-    uint8_t resp[5];
+    uint8_t resp[6];
     io_.beginTransaction(true);
     io_.write(cmd, 2);
-    io_.read(resp, 5);
+    io_.read(resp, 6);
     io_.endTransaction();
     version_ = resp[4];
+    caps_ = resp[5];
     return memcmp(resp, "TANG", 4) == 0;
   }
 
+  /// Gateware version (kGatewareVersion for the bitstream shipped with this
+  /// library).
   uint8_t version() const { return version_; }
+  /// Capability bits (cap::k*), e.g. cap::kQuad.
+  uint8_t capabilities() const { return caps_; }
+  /// True if the bitstream accepts quad-SPI write transactions.
+  bool supportsQuad() const { return caps_ & cap::kQuad; }
 
   /// RESET: flushes both FIFOs and resets the drawing engine (target,
   /// clip and sticky error flags). The picture on screen is kept.
@@ -372,6 +381,7 @@ class TangNanoGPU {
   ITransport& io_;
   uint8_t addr_;
   uint8_t version_ = 0;
+  uint8_t caps_ = 0;
   uint8_t target_ = 0;
   size_t cmdFreeEstimate_ = kCmdFifoBytes;
   size_t pixelCount_ = 0;

@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p build/sim
 
-RTL="rtl/top_tangnano20k.v rtl/clocks.v rtl/spi_gpu.v rtl/byte_fifo.v rtl/bram_sdp.v
+RTL="rtl/top_tangnano20k.v rtl/clocks.v rtl/spi_gpu.v rtl/async_fifo.v rtl/byte_fifo.v rtl/bram_sdp.v
      rtl/gpu_exec.v rtl/scanout.v rtl/video_timing.v rtl/sdram_ctrl.v rtl/dvi_tx.v
      rtl/tmds_encoder.v"
 
@@ -21,7 +21,10 @@ run() {  # name, vvp args, sources...
 run tb_tmds         ""          tb/tb_tmds.v rtl/tmds_encoder.v
 run tb_video_timing ""          tb/tb_video_timing.v rtl/video_timing.v
 run tb_sdram_ctrl   ""          tb/tb_sdram_ctrl.v tb/sdram_model.v rtl/sdram_ctrl.v
-run tb_top          "+selftest" tb/tb_top.v tb/sdram_model.v $RTL
+# full chip over its SPI pins: SPI at 10.8MHz, SPI at ~42MHz, quad SPI at ~42MHz
+run tb_top_spi10    "+selftest"                    tb/tb_top.v tb/sdram_model.v $RTL
+run tb_top_spi42    "+selftest +sckns=12"          tb/tb_top.v tb/sdram_model.v $RTL
+run tb_top_qspi42   "+selftest +sckns=12 +quad"    tb/tb_top.v tb/sdram_model.v $RTL
 
 if [[ $fail -ne 0 ]]; then
   echo "REGRESSION FAILED"

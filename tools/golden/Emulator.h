@@ -99,7 +99,7 @@ class TransportEmulator : public ITransport {
     replied_ = true;
     if (cur_.size() < 2) return;
     switch (cur_[1]) {
-      case op::kPing: reply_ = {'T', 'A', 'N', 'G', 1}; break;
+      case op::kPing: reply_ = {'T', 'A', 'N', 'G', kGatewareVersion, cap::kQuad}; break;
       case op::kStatus: {
         uint16_t used = static_cast<uint16_t>(resp_.size());
         reply_ = {0xff, 0x0f, gpuflag::kSdramReady, 0, 0,

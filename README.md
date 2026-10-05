@@ -51,6 +51,9 @@ pushing.
   screens draw straight onto `SurfaceTangNano`, including dialogs, drawers
   and menus. The MCU needs no framebuffer for this. See
   [docs/tinymaterialdesign.md](docs/tinymaterialdesign.md).
+- **Fast host link, selectable:** plain SPI (any MCU, ~32 MHz) or quad SPI
+  for write transactions (ESP32 family, ~40 MHz × 4 lines). One bitstream
+  accepts both; the sketch picks `TransportSPI` or `TransportQSPI_ESP32`.
 - **Open-source gateware:** Verilog built with yosys, nextpnr-himbaechel and
   Apicula. A prebuilt bitstream is included.
 
@@ -66,8 +69,10 @@ troubleshooting, are in [docs/installation.md](docs/installation.md).
    ```
 
    Connect a monitor and hold button **S2**: you should see colour bars.
-2. **Wire the MCU** (3.3 V): SCK → pin 73, MOSI → 74, MISO ← 75,
-   CS → 76, BUSY ← 71, and GND. See [docs/pinout.md](docs/pinout.md).
+2. **Wire the MCU** (3.3 V): SCK → pin 27, MOSI → 28, MISO ← 29,
+   CS → 30, BUSY ← 31, and GND (the same SPI pins as TangNanoFaust and
+   TangNanoAI). For quad SPI on an ESP32 also IO2 → 25 and IO3 → 26. See
+   [docs/pinout.md](docs/pinout.md).
 3. **Install the libraries:** put this library and
    [TinyGPU](https://github.com/pschatzmann/TinyGPU) in your Arduino
    `libraries` folder. Add
@@ -152,6 +157,7 @@ screen.swap();
 | `wireframe-cube` | TinyGPU `WireFrame3D` |
 | `lvgl-example` | LVGL v9 through `LVGLDriver` + `DisplayDriverTangNano` |
 | `video-player` | H.264 clip decoded by TinyH264 on the MCU; changed YUV macroblocks shown via the FPGA ([docs](docs/video.md)) |
+| `link-benchmark` | measures the link (full frame, small commands, readback); compare SPI and quad SPI |
 | `material-design` | [TinyMaterialDesign](https://github.com/pschatzmann/TinyMaterialDesign) widgets rendered by the FPGA, with no MCU framebuffer ([docs](docs/tinymaterialdesign.md)) |
 
 ## Performance
@@ -166,15 +172,17 @@ Measured in simulation at 64.8 MHz:
 | full-screen scroll | 2.6 ms |
 | 24×24 sprite blit | 39 µs |
 
-Streaming raw pixels is limited by SPI. A full 320×240 frame takes about
-125 ms at 10 MHz, so upload reused images once and blit them. A typical
-TinyMaterialDesign screen redraw is about 20 KB of commands (20–40 ms).
-While a modal dialog is open, its full-screen scrim needs a readback, which
-takes about 0.5 s per redraw.
+Streaming raw pixels is limited by the link: a full 320×240 RGB565 frame
+(153.6 KB) needs about 38 ms of bus time over SPI at 32 MHz and about 8 ms
+over quad SPI at 40 MHz, so upload reused images once and blit them. A
+typical TinyMaterialDesign screen redraw is about 20 KB of commands. While
+a modal dialog is open, its full-screen scrim needs a readback at the 4 MHz
+read clock, about 0.4 s per redraw.
 
-For video, a 16×16 macroblock is 388 bytes on SPI, about 0.2 ms at 16 MHz.
-In the test clip about 12% of macroblocks change per frame: roughly 14 KB,
-or 7 ms per frame. The FPGA converts a macroblock in about 18 µs (estimated
+For video, a 16×16 macroblock is 388 bytes: about 0.1 ms over SPI at
+32 MHz, 0.04 ms over quad SPI. In the test clip about 12% of macroblocks
+change per frame: roughly 14 KB, or 3.4 ms (SPI) / 0.7 ms (quad) per
+frame. The FPGA converts a macroblock in about 18 µs (estimated
 from the state machine), so decoding on the MCU is usually what limits the
 frame rate.
 
@@ -199,7 +207,7 @@ frame rate.
 |---|---|
 | RTL simulation | Passes: unit testbenches, a full-chip test over the real SPI pins, and the pixel-exact golden-model tests (TinyGPU scene, TinyMaterialDesign, H.264 video) |
 | TinyMaterialDesign | A screen with an open dialog renders pixel-identically, both through a protocol emulator and replayed into the RTL (240 readbacks checked) |
-| Toolchain | Synthesises, routes, meets timing (82 MHz / 84 MHz against 64.8 / 25.2 MHz) and packs; 41% of the LUTs, 7 of 46 block RAMs |
+| Toolchain | Synthesises, routes, meets timing (84 MHz / 83 MHz against 64.8 / 25.2 MHz) and packs; 40% of the LUTs, 7 of 46 block RAMs |
 | Video | TinyH264-decoded frames match TinyH264's own RGB565 output pixel for pixel through `YUVFrameWriter`: all 30 frames via the protocol emulator, the first 8 replayed into the RTL. The converter matches for all 16.7 M YUV inputs |
 | Arduino library | All examples compile for ESP32; `ping`, `basic-example`, `sprite-blit`, `material-design` and `video-player` also for RP2040 |
 | Real hardware | **Not tested yet.** No board was attached during development; see the bring-up order in [docs/architecture.md](docs/architecture.md#verification-status) |

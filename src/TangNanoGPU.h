@@ -4,6 +4,7 @@
  * Tang Nano 20K FPGA, driven over SPI by a microcontroller.
  *
  *   TransportSPI          - SPI + chip select + BUSY pin (Arduino)
+ *   TransportQSPI_ESP32   - quad-SPI writes, ESP32 family (ESP-IDF spi_master)
  *   TangNanoGPU           - protocol commands (fill, line, circle, blit ...)
  *   SurfaceTangNano       - TinyGPU ISurface<RGB565> drawn by the FPGA
  *   DisplayDriverTangNano - TinyGPU DisplayDriver<RGB565> (HDMI "panel")
@@ -28,6 +29,9 @@
 #include "TangNanoGPU/YUVFrameWriter.h"
 #if defined(ARDUINO)
 #include "TangNanoGPU/TransportSPI.h"
+#endif
+#if defined(ARDUINO) && defined(ESP32)
+#include "TangNanoGPU/TransportQSPI_ESP32.h"
 #endif
 
 #if defined(ARDUINO) || defined(TANGNANOGPU_AUTO_NAMESPACE)

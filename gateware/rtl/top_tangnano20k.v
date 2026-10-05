@@ -30,10 +30,16 @@ module top_tangnano20k #(
     output wire [2:0]  tmds_d_p,
     output wire [2:0]  tmds_d_n,
 
+    // SPI / quad SPI: IO0 = MOSI, IO1 = MISO (bidirectional in quad mode),
+    // IO2/IO3 only in quad builds (default; `define LINK_SPI_ONLY removes them)
     input  wire        spi_sck,
     input  wire        spi_mosi,
-    output wire        spi_miso,
+    inout  wire        spi_miso,
     input  wire        spi_cs_n,
+`ifndef LINK_SPI_ONLY
+    input  wire        spi_io2,
+    input  wire        spi_io3,
+`endif
     output wire        gpu_busy,
 
     // embedded SDRAM - names are fixed (placed by name by nextpnr)
@@ -95,9 +101,17 @@ module top_tangnano20k #(
   wire [7:0] flags = {1'b0, late, target, sdram_ready, bad_opcode, overflow,
                       front_buf, !(exec_idle && !cmd_valid)};
 
-  spi_gpu u_spi (
+`ifdef LINK_SPI_ONLY
+  localparam integer QUAD = 0;
+  wire [3:0] spi_io = {2'b00, spi_miso, spi_mosi};
+`else
+  localparam integer QUAD = 1;
+  wire [3:0] spi_io = {spi_io3, spi_io2, spi_miso, spi_mosi};
+`endif
+
+  spi_gpu #(.QUAD(QUAD)) u_spi (
       .clk(clk), .rst(rst),
-      .sck(spi_sck), .mosi(spi_mosi), .cs_n(spi_cs_n),
+      .sck(spi_sck), .cs_n(spi_cs_n), .io_in(spi_io),
       .miso(miso_o), .miso_oe(miso_oe),
       .cmd_push(cmd_push), .cmd_data(cmd_din), .cmd_full(cmd_full),
       .resp_valid(resp_valid), .resp_dout(resp_dout), .resp_pop(resp_pop),

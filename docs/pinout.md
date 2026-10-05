@@ -3,20 +3,39 @@
 All signals are 3.3 V. Programming the FPGA uses the board's own USB-C port
 (onboard BL616 USB-JTAG), not any of these pins.
 
-| Tang Nano 20K pin | Signal | Direction | Connect to (ESP32 example) | Notes |
-|---|---|---|---|---|
-| 73 | `spi_sck` | MCU → FPGA | GPIO 18 (VSPI SCK) | weak pull-down |
-| 74 | `spi_mosi` | MCU → FPGA | GPIO 23 (VSPI MOSI) | weak pull-down |
-| 75 | `spi_miso` | FPGA → MCU | GPIO 19 (VSPI MISO) | tri-stated unless the board is addressed |
-| 76 | `spi_cs_n` | MCU → FPGA | GPIO 5 | weak pull-up |
-| 71 | `gpu_busy` | FPGA → MCU | GPIO 4 | high = command FIFO almost full; strongly recommended |
-| GND | GND | | GND | |
+## Host link
 
-These five header pins have no other function on the board. In the
-[arduino-tangnano20k](https://github.com/pschatzmann/arduino-tangnano20k)
-core they are GPIO0/1/2/11/18.
+The SPI pins (27–30) are the same as in the sibling
+[TangNanoFaust](https://github.com/pschatzmann/TangNanoFaust) and
+[TangNanoAI](https://github.com/pschatzmann/TangNanoAI) projects, so one MCU
+wiring works with all three bitstreams.
 
-For RP2040 the examples use: SCK 18, MOSI 19, MISO 16, CS 17, BUSY 20.
+| Tang Nano 20K pin | Signal | Direction | Notes |
+|---|---|---|---|
+| 27 | `spi_sck` | MCU → FPGA | weak pull-down |
+| 28 | `spi_mosi` (IO0) | MCU → FPGA | weak pull-down |
+| 29 | `spi_miso` (IO1) | FPGA → MCU, both ways in quad mode | tri-stated unless the board is addressed |
+| 30 | `spi_cs_n` | MCU → FPGA | weak pull-up |
+| 31 | `gpu_busy` | FPGA → MCU | high = command FIFO almost full; strongly recommended |
+| 25 | `spi_io2` (quad only) | MCU → FPGA | weak pull-up; leave open for plain SPI |
+| 26 | `spi_io3` (quad only) | MCU → FPGA | weak pull-up; leave open for plain SPI |
+| GND | GND | | |
+
+Pins 25–31 belong to the RGB LCD connector (LCD_HS, LCD_VS, LCD_B7…B3),
+which this design doesn't use. A `LINK=spi` bitstream (see
+[building.md](building.md)) has no IO2/IO3 and leaves 25/26 free.
+
+### MCU pins used by the examples
+
+| | SCK | MOSI / IO0 | MISO / IO1 | CS | BUSY | IO2 | IO3 |
+|---|---|---|---|---|---|---|---|
+| ESP32, SPI (`TransportSPI`, VSPI) | 18 | 23 | 19 | 5 | 4 | – | – |
+| ESP32, quad (`TransportQSPI_ESP32`, VSPI IO_MUX pins) | 18 | 23 | 19 | 5 | 4 | 22 | 21 |
+| ESP32-S3 / others, quad | 12 | 11 | 13 | 10 | 8 | 14 | 9 |
+| RP2040, SPI (SPI0) | 18 | 19 | 16 | 17 | 20 | – | – |
+
+On the classic ESP32, SPI clocks above about 26 MHz need the SPI host's
+IO_MUX pins (as in the table). Other MCU pins work at lower clocks.
 
 ## On-board resources used
 
@@ -29,5 +48,6 @@ For RP2040 the examples use: SCK 18, MOSI 19, MISO 16, CS 17, BUSY 20.
 | 15–20 | LEDs (active low): 0 heartbeat, 1 SDRAM ready, 2 error, 3 engine busy, 4 SPI active, 5 scanout late |
 | embedded SDRAM | placed by port name (`O_sdram_*`, `IO_sdram_dq`), not in the `.cst` |
 
-To change pins, edit `gateware/constraints/tangnano20k.cst` and rebuild.
-Avoid 33–40 (HDMI), 15–20 (LEDs) and the pins used by on-board peripherals.
+To change pins, edit `gateware/constraints/tangnano20k.cst` (and
+`qspi.cst` for IO2/IO3) and rebuild. Avoid 33–40 (HDMI), 15–20 (LEDs) and the
+pins used by on-board peripherals.

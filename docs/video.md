@@ -84,22 +84,24 @@ is about 1 in 4 billion.
 
 ## Performance
 
-**SPI:** one macroblock is 388 bytes (4 position + 384 YUV), about 194 µs at
-16 MHz. Measured with the test clip (`tools/golden/clips`, 30 frames of
+**Link:** one macroblock is 388 bytes (4 position + 384 YUV): about 97 µs
+over SPI at 32 MHz, or 39 µs over quad SPI at 40 MHz (bus time). Measured
+macroblock counts with the test clip (`tools/golden/clips`, 30 frames of
 colour bars with moving boxes):
 
-| | Macroblocks sent | SPI per frame |
-|---|---|---|
-| first frame into each buffer | 300 of 300 | 116 KB (≈ 58 ms at 16 MHz) |
-| following frames (average) | ≈ 35 of 300 (12%) | ≈ 13.6 KB (≈ 7 ms at 16 MHz) |
+| | Macroblocks sent | Bytes per frame | SPI 32 MHz | Quad SPI 40 MHz |
+|---|---|---|---|---|
+| first frame into each buffer | 300 of 300 | 116 KB | ≈ 29 ms | ≈ 6 ms |
+| following frames (average) | ≈ 35 of 300 (12%) | ≈ 13.6 KB | ≈ 3.4 ms | ≈ 0.7 ms |
 
-Real video with camera motion changes more of the picture. The worst case
-is the full frame, about 17 fps at 16 MHz over SPI.
+Real video with camera motion changes more of the picture. Even a full
+frame every frame fits: about 34 fps over SPI and well over 100 fps over
+quad SPI, as far as the link is concerned.
 
 **FPGA:** a macroblock takes about 1,150 clock cycles (≈ 18 µs at 64.8 MHz),
 estimated from the state machine: 2 cycles per input byte plus 16 row
-writes. That is about 10× faster than SPI delivers macroblocks, so the
-FPGA never limits throughput.
+writes. That is still about twice as fast as quad SPI delivers
+macroblocks.
 
 **Decoding** usually limits the frame rate. TinyH264 decodes QCIF
 (176×144) in about 20 ms on an ESP32 and 16 ms on an ESP32-S3. Scaled by

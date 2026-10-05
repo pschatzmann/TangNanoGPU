@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Compare the RTL framebuffer dump with TinyGPU's software rendering.
+"""Compare the RTL framebuffer dump with the scene's reference image
+(TinyGPU's software rendering, or TinyH264's own RGB565 for the video).
 
 Usage: compare.py expected.hex actual.hex [diff.ppm]
 
@@ -47,7 +48,7 @@ def main():
     if diffs:
         print(f"FAIL golden: {len(diffs)} of {W * H} pixels differ")
         return 1
-    print(f"PASS golden: all {W * H} pixels match TinyGPU's software rendering")
+    print(f"PASS golden: all {W * H} pixels match the reference")
     return 0
 
 

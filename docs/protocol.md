@@ -1,9 +1,11 @@
 # SPI protocol
 
 The host MCU is the SPI master and the Tang Nano 20K is the slave. The bus
-uses mode 0 (CPOL=0, CPHA=0), MSB first. It is implemented in
+uses mode 0 (CPOL=0, CPHA=0), MSB first, either single-line SPI or quad SPI
+(four data lines) for write transactions. It is implemented in
 `gateware/rtl/spi_gpu.v` (link layer) and `gateware/rtl/gpu_exec.v`
-(drawing commands). The host side lives in `src/TangNanoGPU/GPUDevice.h`.
+(drawing commands). The host side lives in `src/TangNanoGPU/GPUDevice.h`
+and the transports (`TransportSPI.h`, `TransportQSPI_ESP32.h`).
 
 ## Transactions
 
@@ -13,9 +15,10 @@ One transaction is one chip-select-low period:
 CS low  [ADDR] [OPCODE] [payload ...]  CS high
 ```
 
-- **ADDR**: the board answers only if this byte equals its address. The
-  address is a gateware parameter and defaults to `0x00`. Other boards on the
-  same bus keep MISO tri-stated and ignore the transaction.
+- **ADDR**: bits 6:0 are the board address (a gateware parameter, default
+  0); the board answers only if they match. Other boards on the same bus
+  keep MISO tri-stated and ignore the transaction. Bit 7 is the **quad
+  flag** (see below).
 - **OPCODE**: one byte. Immediate opcodes (below) are answered by the SPI
   slave itself. Every other opcode, together with all payload bytes up to
   CS high, goes into the 4 KB command FIFO. The drawing engine runs those
@@ -25,14 +28,34 @@ CS low  [ADDR] [OPCODE] [payload ...]  CS high
   the sticky `bad_opcode` flag and the stream is out of sync. Recover with
   `RESET`.
 
+### Single-line and quad SPI
+
+The interface is selected per transaction, so one bitstream serves both:
+
+- **Single-line SPI:** ADDR bit 7 = 0. Bytes go out on MOSI (IO0), MSB first.
+  Works with every MCU (`TransportSPI`).
+- **Quad SPI (writes only):** the ADDR byte is still sent single-line on
+  IO0, with bit 7 set. Every following byte of that transaction goes out on
+  IO3..IO0, four bits per SCK rising edge, high nibble first (IO3 = bit 7):
+  two clocks per byte. MISO (IO1) is an input to the FPGA then.
+  `TransportQSPI_ESP32` does this with ESP-IDF's `spi_master` (command phase
+  single-line, data phase `SPI_TRANS_MODE_QIO`).
+- Read transactions (PING, STATUS, READ_DATA) are always single-line.
+
+A bitstream built with `LINK=spi` has no IO2/IO3 and ignores bit 7. PING
+reports which kind is loaded.
+
 ### Clock rates
 
-SCK, MOSI and CS are oversampled by the 64.8 MHz system clock.
+The FPGA receives with SCK as the clock (no oversampling) and moves every
+byte into its 64.8 MHz system clock through a small asynchronous FIFO.
 
-- **Writes:** up to about 16 MHz. The library default is 10 MHz.
-- **Reads** (PING, STATUS, READ_DATA): MISO changes a few system clocks
-  after SCK falls, so use 4 MHz or less. `TransportSPI` uses separate write
-  and read clocks for this.
+- **Writes:** tested in simulation up to about 42 MHz, single-line and
+  quad. `TransportSPI` defaults to 32 MHz and `TransportQSPI_ESP32` to
+  40 MHz; long jumper wires may need less.
+- **Reads** (PING, STATUS, READ_DATA): the response byte is prepared in the
+  system clock domain after the previous byte arrived, so reads need a slow
+  SCK: 4 MHz (the default `readHz` of both transports), at most about 5 MHz.
 
 ### Response timing
 
@@ -42,11 +65,11 @@ right after the opcode, and no dummy byte is needed.
 
 ### Flow control: BUSY
 
-`gpu_busy` (pin 71) is high while the command FIFO has less than 1024 bytes
-free, and during reset. The host checks BUSY before every chunk of 256
-bytes. CS may stay low while it waits, because SCK can pause at any time.
-This lets one transaction carry a payload of any size, such as a
-full-screen `WRITE_RECT`.
+`gpu_busy` (pin 31) is high while the command FIFO has less than 1024 bytes
+free, and during reset. The host checks BUSY before every chunk (256 bytes
+for `TransportSPI`, 512 for `TransportQSPI_ESP32`). CS may stay low while
+it waits, because SCK can pause at any time. This lets one transaction
+carry a payload of any size, such as a full-screen `WRITE_RECT`.
 
 Without a BUSY wire, the library limits each command to half the FIFO and
 polls `STATUS` for free space before sending.
@@ -68,7 +91,7 @@ exceptions are PIXELS and WRITE_RECT with flag bit 1: like TinyGPU's
 
 | Op | Name | Payload | Response (starting with the byte after the opcode) |
 |---|---|---|---|
-| `01` | PING | – | `"TANG"`, then the gateware version (`01`) |
+| `01` | PING | – | `"TANG"`, the gateware version (`02`), then capabilities: bit 0 = quad SPI supported |
 | `02` | RESET | – | – flushes both FIFOs; resets the drawing target and the shown buffer to 0, the clip rect to the full screen, and all sticky flags. Framebuffer contents are kept |
 | `03` | STATUS | – | `cmd_free:u16`, `flags:u8`, `frame_count:u16`, `resp_used:u16` |
 | `51` | READ_DATA | – | streams bytes from the response FIFO (`00` once it is empty) |
